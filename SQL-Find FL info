@@ -1,0 +1,58 @@
+/* Find FL info based on ordersn -> consignment no */
+with t1 as (
+SELECT b.ordersn, a.consignment_no
+from shopee_sls_logistic_my_db__logistic_request_tab a 
+right Join shopee_regional_cb_team__kr_my_temp b
+on b.ordersn = a.ordersn
+
+), FL_DB_MAWB AS (
+    select tracking_no, mawb_no
+    from shopee_regional_cb_team__mawb_mapping_tab   )
+
+,t3 as (
+
+    select t1.ordersn, t1.consignment_no,FL_DB_MAWB.mawb_no from t1
+    LEFT JOIN FL_DB_MAWB
+    on t1.consignment_no = FL_DB_MAWB.tracking_no
+)
+
+
+
+,fl_db AS (
+    SELECT *
+    FROM (
+        SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
+        FROM shopee_regional_cb_team__sls_fl_db
+        )
+    WHERE rn = 1 )
+
+,t2 as (
+
+    SELECT cast(country as VARCHAR) as country
+    , cast (fl as VARCHAR) as fl
+    , cast (mawb_no as VARCHAR) as mawb_no
+    , cast (mawb_carton_qty as BIGINT) as mawb_ctns
+    ,cast (first_leg_pickup_time as VARCHAR) as first_leg_pickup_time
+    , cast (batch1_1st_flight_ata as VARCHAR) as batch1_1st_flight_ata
+    , cast (batch1_delivery_time as VARCHAR ) as batch1_delivery_time
+    , cast (batch1_qty as BIGINT) as batch1_qty
+    , cast (batch2_delivery_time as VARCHAR) as batch2_delivery_time
+    , cast (batch2_qty as BIGINT) as batch2_qty
+    , CAST(ingestion_timestamp AS bigint) as ingestion_timestamp
+	, from_unixtime(CAST(ingestion_timestamp AS bigint)) as ingestion_time
+	
+	from fl_db
+	where origin = 'KR' and country = 'MY'
+)
+
+SELECT t3.ordersn
+    ,t3.consignment_no
+    ,t3.mawb_no
+    ,t2.fl
+    ,t2.first_leg_pickup_time
+    ,t2.batch1_1st_flight_ata
+    ,t2.batch1_delivery_time
+    from t3
+LEFT Join t2
+on t3.mawb_no = t2.mawb_no
+
