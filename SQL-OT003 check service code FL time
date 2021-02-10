@@ -1,0 +1,65 @@
+with sls2 AS (
+    SELECT log_id
+        , coalesce(default_ctime, lm_cc_done_time) AS lm_inbound_time
+    FROM
+        (SELECT log_id
+            , min(IF(status in (8, 9, 10, 13), ctime, NULL)) AS default_ctime
+            , min(IF(action_status in (28, 17, 18, 19, 22), ctime, NULL)) AS lm_cc_done_time
+        FROM shopee_sls_logistic_th_db__logistic_tracking_tab
+        WHERE DATE(from_unixtime(ctime)) between date_add('day', -60, current_date) AND date_add('day', -1, current_date)
+        GROUP BY 1
+        )
+    WHERE DATE(from_unixtime(coalesce(default_ctime, lm_cc_done_time))) between date_add('day', -11, current_date) AND date_add('day', -4, current_date)
+), sls3 AS (
+    SELECT logistics_id, order_id, cb_option
+        from shopee_order_logistics_db__order_logistics_tab
+        WHERE cb_option = 1
+), sls4 AS (
+    SELECT log_id, consignment_no, ordersn, service_code
+        from shopee_sls_logistic_th_db__logistic_request_tab
+        WHERE service_code in ('SHM')
+), sls5 AS (
+    SELECT orderid, country,is_cross_border, channel_id,grass_region,grass_date
+    from order_mart__order_profile
+    WHERE grass_region = 'TH'
+      AND grass_date >= DATE '2020-12-01'
+      AND is_cross_border = 1
+      AND channel_id in (78004)
+), FL_DB_MAWB AS (
+    select tracking_no, mawb_no
+    from shopee_regional_cb_team__mawb_mapping_tab   
+), fl_db AS (
+    SELECT *
+    FROM (
+        SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
+        FROM shopee_regional_cb_team__sls_fl_db
+        )
+    WHERE rn = 1
+    AND country = 'TH'
+), FL_DB_delivery_time AS (
+    SELECT mawb_no, mawb_carton_qty,
+        CASE WHEN CAST(batch1_qty AS DOUBLE) >= 0.8 * CAST(mawb_carton_qty AS DOUBLE) THEN batch1_delivery_time
+             ELSE batch2_delivery_time
+        END AS delivery_time_80th
+    from fl_db
+)
+
+select  
+        -- sls5.orderid, 
+        -- sls5.country,
+        -- sls5.channel_id,
+        sls4.ordersn,
+        sls4.service_code,
+        sls4.consignment_no,
+        sls2.lm_inbound_time,
+        FL_DB_MAWB.mawb_no,
+        FL_DB_delivery_time.mawb_carton_qty,
+        FL_DB_delivery_time.delivery_time_80th
+        --b.carton_no
+from sls2
+JOIN sls4 on sls2.log_id = sls4.log_id
+-- LEFT JOIN sls3 on sls3.logistics_id = sls4.log_id
+-- LEFT JOIN sls5 on sls3.order_id = sls5.orderid
+LEFT JOIN FL_DB_MAWB on sls4.consignment_no = FL_DB_MAWB.tracking_no
+LEFT JOIN FL_DB_delivery_time on FL_DB_MAWB.mawb_no = FL_DB_delivery_time.mawb_no
+--LEFT JOIN shopee_regional_cb_team__sls_order_estimated_cost_tab b on sls4.ordersn = b.ordersn
