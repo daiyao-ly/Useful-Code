@@ -1,13 +1,13 @@
 /* Find FL info based on ordersn -> consignment no */
 with t1 as (
 SELECT b.ordersn, a.consignment_no
-from shopee_sls_logistic_my_db__logistic_request_tab a 
-right Join shopee_regional_cb_team__kr_my_temp b
+from shopee_sls_logistic_my_db__logistic_request_tab a  --logistics tab
+right Join shopee_regional_cb_team__kr_my_temp b        -- ingestion csv tab      
 on b.ordersn = a.ordersn
 
 ), FL_DB_MAWB AS (
     select tracking_no, mawb_no
-    from shopee_regional_cb_team__mawb_mapping_tab   )
+    from shopee_regional_cb_team__mawb_mapping_tab   )  -- FL_DB tracking no to MAWB no tab
 
 ,t3 as (
 
@@ -24,7 +24,7 @@ on b.ordersn = a.ordersn
         SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
         FROM shopee_regional_cb_team__sls_fl_db
         )
-    WHERE rn = 1 )
+    WHERE rn = 1 )    --get the latest record
 
 ,t2 as (
 
@@ -43,7 +43,7 @@ on b.ordersn = a.ordersn
 	
 	from fl_db
 	where origin = 'KR' and country = 'MY'
-)
+)  -- FL DB tracker info
 
 SELECT t3.ordersn
     ,t3.consignment_no
