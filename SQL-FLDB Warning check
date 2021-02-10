@@ -1,0 +1,20 @@
+with t1 as (
+
+    SELECT cast(country as VARCHAR) as country
+    , cast (fl as VARCHAR) as fl
+    , cast (mawb_no as VARCHAR) as mawb_no
+    , cast (mawb_carton_qty as BIGINT) as mawb_ctns
+    , cast (batch1_1st_flight_ata as VARCHAR) as batch1_1st_flight_ata
+    , cast (batch1_delivery_time as VARCHAR ) as batch1_delivery_time
+    , cast (batch1_qty as BIGINT) as batch1_qty
+    , cast (batch2_delivery_time as VARCHAR) as batch2_delivery_time
+    , cast (batch2_qty as BIGINT) as batch2_qty
+    , CAST(ingestion_timestamp AS bigint) as ingestion_timestamp
+	, from_unixtime(CAST(ingestion_timestamp AS bigint)) as ingestion_time
+	
+	from shopee_regional_cb_team__sls_fl_db
+)
+
+SELECT * from t1 
+WHERE country = 'MY' and mawb_no = '618-78486144'
+ORDER BY ingestion_time DESC
