@@ -1,0 +1,66 @@
+-- https://trello.com/c/SR91EDWW/596-cn-id-delivered-orders-in-billing-info-exceeding-sla-for-claim
+
+SELECT l.last_mile_tracking_no AS lm_tracking_number
+	,from_unixtime(coalesce(t.default_ctime, t.lm_cc_done_time)) AS lm_inbound_time
+	,from_unixtime(t.first_delivery_attempt_time) AS first_delivery_attempt_time
+	,sm.status_name AS final_status
+	,from_unixtime(t.final_status_update_time) AS final_status_update_time
+FROM (
+	SELECT last_mile_tracking_no
+	FROM shopee.shopee_regional_cb_team__sls_id_delivery_sla
+	WHERE last_mile_tracking_no IS NOT NULL
+	
+	UNION ALL
+	
+	SELECT last_mile_tracking_no_2
+	FROM shopee.shopee_regional_cb_team__sls_id_delivery_sla
+	WHERE last_mile_tracking_no_2 IS NOT NULL
+	
+	UNION ALL
+	
+	SELECT last_mile_tracking_no_3
+	FROM shopee.shopee_regional_cb_team__sls_id_delivery_sla
+	WHERE last_mile_tracking_no_3 IS NOT NULL
+	
+	UNION ALL
+	
+	SELECT last_mile_tracking_no_4
+	FROM shopee.shopee_regional_cb_team__sls_id_delivery_sla
+	WHERE last_mile_tracking_no_4 IS NOT NULL
+	
+	UNION ALL
+	
+	SELECT last_mile_tracking_no_5
+	FROM shopee.shopee_regional_cb_team__sls_id_delivery_sla
+	WHERE last_mile_tracking_no_5 IS NOT NULL
+	) l
+LEFT JOIN (
+	SELECT ordersn
+		,log_id
+		,lm_tracking_number
+	FROM shopee.shopee_sls_logistic_id_db__logistic_request_tab
+	WHERE shipment_provider = 'JNT'
+	) r
+	ON l.last_mile_tracking_no = r.lm_tracking_number
+LEFT JOIN (
+	SELECT log_id
+		,min(IF(action_status in (28, 17, 18, 19, 22), update_time, NULL)) AS lm_cc_done_time
+		,min(IF(status        in (8 , 9, 10, 13), update_time, NULL))      AS default_ctime
+		,min(IF(status        in (11, 13), update_time, NULL))             AS first_delivery_attempt_time
+		,max(update_time) AS final_status_update_time
+	FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+	GROUP BY 1
+	) t
+	ON r.log_id = t.log_id
+INNER JOIN (
+	SELECT DISTINCT log_id
+		,STATUS
+		,update_time
+	FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+	) t2
+	ON t.log_id = t2.log_id
+		AND t.final_status_update_time = t2.update_time
+INNER JOIN shopee.shopee_regional_cb_team__status_mapping sm
+	ON t2.STATUS = cast(sm.status_value AS INT)
+		AND sm.status_type = 'logistics_status'
+WHERE sm.status_name != 'DOMESTIC_DELIVERED'
