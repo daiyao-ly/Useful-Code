@@ -1,0 +1,43 @@
+WITH t1 AS
+(
+SELECT
+	cast(invoice_no as VARCHAR) invoice_no
+	, cast(invoice_issue_date as VARCHAR) invoice_issue_date
+	, cast(cost_type as VARCHAR) as cost_type
+	, cast(vendor_name as VARCHAR) as vendor_name
+	, cast(original_country as VARCHAR) as original_country
+	, cast(destination_country as VARCHAR) as destination_country
+	, cast(carton_no as VARCHAR) carton_no
+	, cast(sls_tracking_no as VARCHAR) as sls_tracking_no
+	, cast(last_mile_tracking_no as VARCHAR) as last_mile_tracking_no
+	, cast(mawb_no as VARCHAR) as mawb_no
+	, cast(shopee_mawb_no_check as VARCHAR) as shopee_mawb_no_check
+	, cast(pickup_date as VARCHAR) as pickup_date
+	, cast(flight_no as VARCHAR) as flight_no
+	, cast(flight_date as VARCHAR) as flight_date
+	, cast(carton_quantity as DOUBLE) as carton_quantity
+	, cast(parcel_quantity as DOUBLE) as parcel_quantity
+	, cast(tp_type as VARCHAR) as tp_type
+	, cast(gross_weight as DOUBLE) as gross_weight
+	, cast(chargable_weight as DOUBLE) as chargable_weight
+	, cast(transportation_cost as DOUBLE) as transportation_cost
+	, cast(transportation_currency as VARCHAR) as transportation_currency
+	, cast(cc_cost as DOUBLE) as cc_cost
+	, cast(cc_currency as VARCHAR) as cc_currency
+	, cast(other_cost as DOUBLE) as other_cost
+	, cast(other_currency as VARCHAR) as other_currency
+	, cast(duty_cost as DOUBLE) as duty_cost
+	, cast(duty_currency as VARCHAR) as duty_currency
+	, cast(special_cost as DOUBLE) as special_cost
+	, cast(special_currency as VARCHAR) as special_currency
+	, cast(paid_amount as DOUBLE) as paid_amount
+	, cast(paid_currency as VARCHAR) as paid_currency
+	, CAST(ingestion_timestamp AS bigint) as ingestion_timestamp
+	, from_unixtime(CAST(ingestion_timestamp AS bigint)) as ingestion_time
+
+FROM shopee_sz.shopee_sz_bi_team__fl_cc_invoice__done
+--WHERE CAST(ingestion_timestamp AS bigint) = (SELECT max(CAST(ingestion_timestamp AS bigint)) FROM shopee_sz.shopee_sz_bi_team__fl_cc_invoice__done)
+)
+SELECT * from t1
+WHERE vendor_name = 'SKK'
+order by invoice_issue_date DESC
