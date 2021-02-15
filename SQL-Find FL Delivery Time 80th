@@ -1,0 +1,45 @@
+with t1 as (
+SELECT a.ordersn, b.consignment_no,a.month,a.wh_outbound,a.lm_inbound
+from shopee_regional_cb_team__lost_my_order a 
+LEFT JOIN shopee_sls_logistic_my_db__logistic_request_tab b
+on a.ordersn = b.ordersn
+),FL_DB_MAWB AS (
+    select tracking_no, mawb_no
+    from shopee_regional_cb_team__mawb_mapping_tab   )  -- FL_DB tracking no to MAWB no tab
+
+,t3 as (
+
+    select t1.ordersn, t1.consignment_no,t1.month,t1.wh_outbound,t1.lm_inbound, FL_DB_MAWB.mawb_no from t1
+    LEFT JOIN FL_DB_MAWB
+    on t1.consignment_no = FL_DB_MAWB.tracking_no
+)
+
+--order with MAWB info
+
+,fl_db AS (
+    SELECT *
+    FROM (
+        SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
+        FROM shopee_regional_cb_team__sls_fl_db
+        )
+    WHERE rn = 1 )    --get the latest record
+
+,t2 AS (
+    SELECT mawb_no, mawb_carton_qty,
+        CASE WHEN CAST(batch1_qty AS DOUBLE) >= 0.8 * CAST(mawb_carton_qty AS DOUBLE) THEN batch1_delivery_time
+             ELSE batch2_delivery_time
+        END AS delivery_time_80th
+    from fl_db
+    WHERE  origin = 'CN' and country = 'MY'
+) --get the 80th delivery time
+
+SELECT t3.ordersn
+    ,t3.consignment_no
+    ,t3.month
+    ,t3.mawb_no
+    ,t3.wh_outbound
+    ,t3.lm_inbound
+    ,t2.delivery_time_80th
+    from t3
+LEFT Join t2
+on t3.mawb_no = t2.mawb_no
