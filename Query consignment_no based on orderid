@@ -1,0 +1,222 @@
+SELECT DISTINCT
+    ord_v4.grass_region
+  , ord_v4.orderid
+  , sls1.consignment_no
+  , ord_v4.ordersn
+  , ord_v4.cancel_time
+  --, IF(ord_v4.grass_region != 'BR', coalesce(sls2.default_ctime, sls2.lm_cc_done_time), coalesce(sls2.lm_cc_done_time, sls2.default_ctime)) AS lm_inbound_time
+  , ord_log.logistics_status
+FROM
+    shopee.shopee_order_v4_db__order_v4_tab ord_v4
+    LEFT JOIN
+        shopee.shopee_order_logistics_db__order_logistics_tab ord_log
+        ON
+            ord_v4.grass_region      = ord_log.grass_region
+            AND ord_v4.orderid       = ord_log.order_id
+            AND ord_log.create_time >= to_unixtime(date_add('day', -200, current_date))
+    LEFT JOIN
+        (
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'SG' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_sg_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'MY' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_my_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'TW' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_tw_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'ID' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_id_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'TH' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_th_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'PH' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_ph_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'VN' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_vn_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+            UNION ALL
+            SELECT
+                log_id
+              , ordersn
+              , consignment_no
+              , 'BR' AS grass_region
+            FROM
+                shopee.shopee_sls_logistic_br_db__logistic_request_tab
+            WHERE
+                ctime >= to_unixtime(date_add('day', -200, current_date))
+        )
+        sls1
+        ON
+            sls1.grass_region = ord_v4.grass_region
+            AND sls1.ordersn  = ord_v4.ordersn
+    LEFT JOIN
+        (
+            SELECT
+                'SG' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'MY' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'TW' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_tw_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'ID' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'TH' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_th_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'PH' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_ph_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'VN' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_vn_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+            UNION ALL
+            SELECT
+                'BR' AS grass_region
+              , log_id
+              , min(IF(action_status IN (28 , 17 , 18 , 19 , 22), update_time, NULL)) AS lm_cc_done_time
+              , min(IF(status        IN (8  , 9 , 10 , 13), update_time, NULL))       AS default_ctime
+            FROM
+                shopee.shopee_sls_logistic_br_db__logistic_tracking_tab
+            WHERE
+                update_time >= to_unixtime(date_add('day', -200, current_date))
+            GROUP BY
+                1
+              , 2
+        )
+        sls2
+        ON
+            sls1.grass_region = sls2.grass_region
+            AND sls2.log_id   = sls1.log_id
+WHERE
+    ord_v4.cb_option        = 1
+    AND ord_log.cb_option   = 1
+    AND ord_v4.create_time >= to_unixtime(date_add('day', -200, current_date))
+    and ord_v4.orderid in (
+    
+   63632835297064,
+63615676308962
+
+    )
