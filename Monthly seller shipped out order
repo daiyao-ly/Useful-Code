@@ -1,0 +1,83 @@
+SELECT ch.origin
+        , o.grass_region
+        , o.whs_code
+        , o.service_code
+        , CASE WHEN o.grass_region = 'BR' AND o.service_code in ('B01', 'B02') then 'China post'
+                WHEN o.grass_region = 'BR' AND o.service_code in ('B05', 'B06') then '(Ascendia)'
+                WHEN o.grass_region = 'BR' AND o.service_code in ('B07', 'B08') then '(Direct Link)'
+                ELSE supp.first_leg
+            END AS FL
+        , IF(supp.custom_clearance = 'TBA', '-', supp.custom_clearance) AS CC
+        , CASE WHEN o.grass_region = 'BR' AND o.service_code in ('B01', 'B02') then 'China post'
+                WHEN o.grass_region = 'BR' AND o.service_code in ('B05', 'B06') then 'Swiss Post'
+                WHEN o.grass_region = 'BR' AND o.service_code in ('B07', 'B08') then 'Sweden Post'
+                ELSE supp.last_mile
+            END AS LM
+        , count(distinct consignment_no) AS Dec_seller_shipout_order
+    FROM
+        (SELECT grass_region, trim(consignment_no) AS consignment_no, service_code, whs_code, from_unixtime(seller_shipout_time) AS seller_shipout_date, channel_id
+        FROM shopee_reg_cb_anlys.cb_logistics_mart_test
+        WHERE from_unixtime(seller_shipout_time) between DATE '2020-12-01' AND DATE '2020-12-31'
+            AND service_code is NOT NULL
+            AND service_code != ''
+            AND whs_code is NOT NULL
+            AND whs_code != ''
+            AND shipping_category = 'Integrated'
+        ) o
+    LEFT JOIN
+        (SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_sg_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_my_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_tw_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_id_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_th_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_ph_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_vn_db__logistic_channel_tab
+        UNION ALL
+        SELECT distinct channelid, from_country AS origin
+        FROM shopee.shopee_logistic_br_db__logistic_channel_tab
+        ) ch
+    ON o.channel_id = ch.channelid
+    LEFT JOIN
+        (SELECT data_date
+            , service_code
+            , whs_code
+            , first_leg
+            , custom_clearance
+            , last_mile
+        FROM
+            (SELECT *
+                , row_number() over (partition BY data_date, service_code, whs_code ORDER BY ingestion_timestamp DESC) AS rn 
+            FROM
+                (SELECT trim(region) AS region
+                    , trim(service_code) AS service_code
+                    , trim(whs_code) AS whs_code
+                    , trim(first_leg) AS first_leg
+                    , trim(fl_handover) AS fl_handover
+                    , trim(custom_clearance) AS custom_clearance
+                    , trim(lm_handover) AS lm_handover
+                    , trim(last_mile) AS last_mile
+                    , trim(data_date) AS data_date
+                    , cast(ingestion_timestamp AS BIGINT) AS ingestion_timestamp
+                FROM shopee.shopee_regional_cb_team__service_code_supplier_tab_new
+                )
+            )
+        WHERE rn = 1
+        ) supp
+    ON o.service_code = supp.service_code
+        AND o.whs_code = supp.whs_code
+        AND date(o.seller_shipout_date) = date(supp.data_date)
+    GROUP BY 1, 2, 3, 4, 5, 6, 7
+    ORDER BY 1, 2, 3, 4, 5, 6, 7
