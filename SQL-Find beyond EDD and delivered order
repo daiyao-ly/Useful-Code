@@ -1,0 +1,13 @@
+SELECT grass_region
+,ordersn
+, consignment_no
+, lm_tracking_number
+, from_unixtime(delivery_time) AS delivery_time
+, from_unixtime(expected_receive_time) AS EDD_time
+, cdt_with_ext
+, from_unixtime(pickup_done_time) AS pickup_done_time
+, from_unixtime(lm_inbound_time) AS lm_inbound_time_time
+FROM shopee_reg_cb_anlys.cb_logistics_mart_test
+WHERE DATE(from_unixtime(delivery_time)) between date_add('day', -7, current_date) AND date_add('day', -1, current_date)
+    AND DATE(from_unixtime(delivery_time)) > DATE(from_unixtime(expected_receive_time))
+    AND channel_id in(28016)
