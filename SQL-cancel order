@@ -1,0 +1,6 @@
+SELECT ordersn, consignment_no, lm_tracking_number, from_unixtime(coalesce(cancel_completed_time, invalid_time)) AS cancel_time, from_unixtime(pickup_done_time) AS pickup_done_time
+FROM shopee_reg_cb_anlys.cb_logistics_mart_test
+WHERE DATE(from_unixtime(coalesce(cancel_completed_time, invalid_time))) between date_add('day', -7, current_date) AND date_add('day', -1, current_date)
+    AND coalesce(cancel_completed_time, invalid_time) > pickup_done_time 
+    AND cancel_userid = -1
+    AND channel_id = 48006
