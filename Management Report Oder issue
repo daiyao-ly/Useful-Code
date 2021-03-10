@@ -1,0 +1,23 @@
+										
+SELECT  l.channel_id
+, l.consignment_no
+--, from_unixtime(l.pay_time) as pay_time
+, from_unixtime(l.lm_inbound_time) AS lm_inbound_time
+, from_unixtime(l.delivery_time) AS delivery_time	
+,l.payment_method
+        --, IF(payment_method = 6, DATE(from_unixtime(shipping_confirm_time)), DATE(from_unixtime(pay_time))) AS pay_date
+       -- , l.shipping_confirm_time
+        --, pay_time
+  		, CASE WHEN l.grass_region in ('ID', 'TH', 'VN') then IF(l.payment_method = 6, DATE(from_unixtime(l.shipping_confirm_time-3600)), DATE(from_unixtime(l.pay_time-3600))) 
+			WHEN l.grass_region in ('BR') then IF(l.payment_method = 6, DATE(from_unixtime(l.shipping_confirm_time-11*3600)), DATE(from_unixtime(l.pay_time-11*3600))) 
+			ELSE IF(l.payment_method = 6, DATE(from_unixtime(l.shipping_confirm_time)), DATE(from_unixtime(l.pay_time))) 
+		  END AS pay_date
+--, a.mawb_no
+--, a.carton_no
+	FROM shopee_reg_cb_anlys.cb_logistics_mart_test	l
+--	LEFT JOIN shopee_sz.shopee_sz_cb_team__sls_mawb_lm_mapping_tab a
+--	ON l.consignment_no = a.tracking_no
+	WHERE DATE(from_unixtime(l.delivery_time)) = date_add('day', -1, current_date)								
+	--AND DATE(lm_inbound_time) > DATE(pickup_done_time)									
+	--AND cancel_userid = -1									
+	AND l.channel_id = 48006
