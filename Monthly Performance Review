@@ -1,0 +1,126 @@
+WITH edd AS (
+    SELECT order_id, extinfo.expected_receive_time AS edd
+    FROM shopee.shopee_order_logistics_db__order_logistics_tab
+    WHERE DATE(from_unixtime(create_time)) >= date_add('day', -89, current_date)
+  		AND grass_region != ''
+), lm_inbound_sg AS (
+    SELECT 'SG' AS grass_region
+        , log_id
+        , min(IF(regexp_like(message, 'Parcel has arrived at Roadbull sorting centre'), update_time, NULL)) AS rb_inbound_time
+        , min(IF(regexp_like(lower(message), 'shipment in transit with 3rd party'), update_time, NULL)) AS twsip_qt_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility'), update_time, NULL)) AS twsip_njv_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility|order has arrived at sorting hub|arrived at ninja van warehouse|arrived at sorting hub|parcel is being processed at ninja van warehouse|ninja van sorting facility'), update_time, NULL)) AS mysip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse|inbound in transit to sorting center|order received by local sorting centre'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(message, 'SUCCESS'), update_time, NULL)) AS idsip_delivery_time
+    FROM shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1,2
+), lm_inbound_my AS (
+    SELECT 'MY' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(message, '\bItem picked up\b|\bItem dispatched out\b|\bItem processed.'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1,2
+), lm_inbound_id AS (
+    SELECT 'ID' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'ninja xpress sorting facility'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1, 2
+), orders AS (
+	SELECT  l.orderid
+        , l.integrated_channel_origin AS origin
+  		, CASE  WHEN l.grass_region = 'SG' AND l.channel_id = 18025 then 'SG Express'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 AND l.service_code in ('SOB', 'SOC') AND shipment_provider = 'Singpost' then 'SG Economy'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 then 'SG Eco to Exp'
+				ELSE l.grass_region
+		  END AS destination
+        , l.payment_method
+        , l.shipping_confirm_time
+        , l.seller_shipout_time
+        , l.pickup_done_time
+        , l.wh_outbound_time
+        , CASE  WHEN l.channel_id in (18043, 18042) then coalesce(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
+                WHEN l.channel_id in (18044) then sg.idsip_lm_inbound_time
+                WHEN l.channel_id in (18052) then sg.mysip_lm_inbound_time
+                WHEN l.channel_id in (28044) then my.idsip_lm_inbound_time
+                WHEN l.channel_id in (28042, 28043) then my.twsip_lm_inbound_time
+                WHEN l.channel_id in (88042) then id.twsip_lm_inbound_time
+                WHEN l.service_code in ('S03', 'S04', 'S97', 'S98') then coalesce(sg.rb_inbound_time, l.lm_inbound_time)
+                ELSE l.lm_inbound_time
+          END AS lm_inbound_time
+        , coalesce(l.deliver_to_store_time, l.delivery_time) AS delivery_time
+        , l.delivery_failed_time
+        , l.invalid_time
+        , l.cancel_completed_time
+        , l.return_completed_time
+        , COALESCE(l.return_completed_time, l.cancel_completed_time, l.invalid_time) AS cancel_time
+        , l.cancel_reason
+        , e.edd
+	FROM shopee_reg_cb_anlys.cb_logistics_mart_test l
+	LEFT JOIN edd e ON e.order_id = l.orderid
+    LEFT JOIN shopee.shopee_sls_logistic_sg_db__logistic_request_tab r ON l.ordersn = r.ordersn
+    LEFT JOIN lm_inbound_sg sg ON l.grass_region = sg.grass_region AND l.log_id = sg.log_id
+    LEFT JOIN lm_inbound_my my ON l.grass_region = my.grass_region AND l.log_id = my.log_id
+    LEFT JOIN lm_inbound_id id ON l.grass_region = id.grass_region AND l.log_id = id.log_id
+    WHERE integrated_channel_origin = 'CN'
+), raw AS (
+    SELECT  origin
+            , destination
+            , DATE(from_unixtime(seller_shipout_time)) as seller_shipout_date
+            , count(distinct orderid) AS "1_seller_shipout"
+            
+            , count(distinct CASE WHEN (pickup_done_time IS NOT NULL OR wh_outbound_time IS NOT NULL OR lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL) THEN orderid ELSE NULL END) AS "2_pickup_done"
+            , count(distinct CASE WHEN (pickup_done_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P2_shipout_nonreceived"
+            , count(distinct CASE WHEN (pickup_done_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NOT NULL) THEN orderid ELSE NULL END) AS "C2_cancel_after_shipout"
+
+            , count(distinct CASE WHEN (wh_outbound_time IS NOT NULL OR lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL)THEN orderid ELSE NULL END) AS "3_wh_outbound"
+            , count(distinct CASE WHEN (pickup_done_time IS NOT NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P3_stuck_at_wh"
+
+            , count(distinct CASE WHEN (lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL) THEN orderid ELSE NULL END) AS "4_lm_inbound"
+            , count(distinct CASE WHEN (wh_outbound_time IS NOT NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P4_stuck_at_fl"
+
+            , count(distinct CASE WHEN (delivery_time IS NOT NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "5_delivered"
+            , count(distinct CASE WHEN (lm_inbound_time IS NOT NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P5_pending_delivery"
+            
+            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND cancel_time IS NOT NULL then orderid ELSE NULL END) AS "C3_fail_rr_reject"
+            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then orderid ELSE NULL END) AS "C3_failed_delivery"
+            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NOT NULL then orderid ELSE NULL END) AS "C3_rr"
+            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method = 6 then orderid ELSE NULL END) AS "C3_cod_reject"
+            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NULL AND cancel_time is NOT NULL then orderid ELSE NULL END) AS "C3_others"
+            
+            , count(distinct CASE WHEN cancel_reason = 5 then orderid ELSE NULL END) AS "C3_1_lost"
+            , count(distinct CASE WHEN cancel_reason = 201 then orderid ELSE NULL END) AS "C3_2_pickup_fail"
+            
+			, count(distinct CASE WHEN to_unixtime(current_date) > edd AND pickup_done_time IS NOT NULL AND delivery_time IS NULL and invalid_time is NULL and cancel_completed_time is NULL and return_completed_time is NULL then orderid ELSE NULL END) AS beyond_edd_pending
+    FROM orders
+    WHERE DATE(from_unixtime(seller_shipout_time)) between DATE('2021-2-1') and DATE('2021-2-28')
+  	AND DATE(from_unixtime(seller_shipout_time)) < current_date
+    GROUP BY 1,2,3
+)
+
+SELECT  destination, seller_shipout_date
+        , "1_seller_shipout"
+        , "2_pickup_done"
+        , "P2_shipout_nonreceived"
+        , "C2_cancel_after_shipout"
+        , "3_wh_outbound"
+        , "P3_stuck_at_wh"
+        , "4_lm_inbound"
+        , "P4_stuck_at_fl"
+        , "5_delivered"
+        , "P5_pending_delivery"
+        , "C3_fail_rr_reject"
+        , "C3_failed_delivery"
+        , "C3_rr"
+        , "C3_cod_reject"
+        , "C3_others"
+        , "C3_1_lost"
+        , "C3_2_pickup_fail"
+        , "C2_cancel_after_shipout" + "C3_fail_rr_reject" AS total_cancelled
+        , "P2_shipout_nonreceived" + "P3_stuck_at_wh" + "P4_stuck_at_fl" + "P5_pending_delivery" AS total_pending
+FROM raw 
+ORDER BY 1,2
