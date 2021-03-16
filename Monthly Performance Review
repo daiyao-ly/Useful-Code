@@ -19,7 +19,7 @@ WITH edd AS (
     SELECT 'MY' AS grass_region
         , log_id
         , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, NULL)) AS idsip_lm_inbound_time
-        , min(IF(regexp_like(message, '\bItem picked up\b|\bItem dispatched out\b|\bItem processed.'), update_time, NULL)) AS twsip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'picked up'), update_time, NULL)) AS twsip_lm_inbound_time
     FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
     WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
     GROUP BY 1,2
@@ -36,12 +36,14 @@ WITH edd AS (
   		, CASE  WHEN l.grass_region = 'SG' AND l.channel_id = 18025 then 'SG Express'
 				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 AND l.service_code in ('SOB', 'SOC') AND shipment_provider = 'Singpost' then 'SG Economy'
 				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 then 'SG Eco to Exp'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18055 then 'SG Seashipping'
+				WHEN l.grass_region = 'MY' AND l.channel_id = 28052 then 'MY Seashipping'
 				ELSE l.grass_region
 		  END AS destination
         , l.payment_method
         , l.shipping_confirm_time
         , l.seller_shipout_time
-        , l.pickup_done_time
+        , l.wh_inbound_time
         , l.wh_outbound_time
         , CASE  WHEN l.channel_id in (18043, 18042) then coalesce(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
                 WHEN l.channel_id in (18044) then sg.idsip_lm_inbound_time
@@ -73,12 +75,12 @@ WITH edd AS (
             , DATE(from_unixtime(seller_shipout_time)) as seller_shipout_date
             , count(distinct orderid) AS "1_seller_shipout"
             
-            , count(distinct CASE WHEN (pickup_done_time IS NOT NULL OR wh_outbound_time IS NOT NULL OR lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL) THEN orderid ELSE NULL END) AS "2_pickup_done"
-            , count(distinct CASE WHEN (pickup_done_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P2_shipout_nonreceived"
-            , count(distinct CASE WHEN (pickup_done_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NOT NULL) THEN orderid ELSE NULL END) AS "C2_cancel_after_shipout"
+            , count(distinct CASE WHEN (wh_inbound_time IS NOT NULL OR wh_outbound_time IS NOT NULL OR lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL) THEN orderid ELSE NULL END) AS "2_pickup_done"
+            , count(distinct CASE WHEN (wh_inbound_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P2_shipout_nonreceived"
+            , count(distinct CASE WHEN (wh_inbound_time IS NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NOT NULL) THEN orderid ELSE NULL END) AS "C2_cancel_after_shipout"
 
             , count(distinct CASE WHEN (wh_outbound_time IS NOT NULL OR lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL)THEN orderid ELSE NULL END) AS "3_wh_outbound"
-            , count(distinct CASE WHEN (pickup_done_time IS NOT NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P3_stuck_at_wh"
+            , count(distinct CASE WHEN (wh_inbound_time IS NOT NULL AND wh_outbound_time IS NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P3_stuck_at_wh"
 
             , count(distinct CASE WHEN (lm_inbound_time IS NOT NULL OR delivery_time IS NOT NULL) THEN orderid ELSE NULL END) AS "4_lm_inbound"
             , count(distinct CASE WHEN (wh_outbound_time IS NOT NULL AND lm_inbound_time IS NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P4_stuck_at_fl"
@@ -86,18 +88,18 @@ WITH edd AS (
             , count(distinct CASE WHEN (delivery_time IS NOT NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "5_delivered"
             , count(distinct CASE WHEN (lm_inbound_time IS NOT NULL AND delivery_time IS NULL AND cancel_time IS NULL) THEN orderid ELSE NULL END) AS "P5_pending_delivery"
             
-            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND cancel_time IS NOT NULL then orderid ELSE NULL END) AS "C3_fail_rr_reject"
-            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then orderid ELSE NULL END) AS "C3_failed_delivery"
-            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NOT NULL then orderid ELSE NULL END) AS "C3_rr"
-            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method = 6 then orderid ELSE NULL END) AS "C3_cod_reject"
-            , count(distinct CASE WHEN (pickup_done_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NULL AND cancel_time is NOT NULL then orderid ELSE NULL END) AS "C3_others"
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND cancel_time IS NOT NULL then orderid ELSE NULL END) AS "C3_fail_rr_reject"
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then orderid ELSE NULL END) AS "C3_failed_delivery"
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NOT NULL then orderid ELSE NULL END) AS "C3_rr"
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method = 6 then orderid ELSE NULL END) AS "C3_cod_reject"
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NULL AND return_completed_time IS NULL AND cancel_time is NOT NULL then orderid ELSE NULL END) AS "C3_others"
             
             , count(distinct CASE WHEN cancel_reason = 5 then orderid ELSE NULL END) AS "C3_1_lost"
             , count(distinct CASE WHEN cancel_reason = 201 then orderid ELSE NULL END) AS "C3_2_pickup_fail"
             
-			, count(distinct CASE WHEN to_unixtime(current_date) > edd AND pickup_done_time IS NOT NULL AND delivery_time IS NULL and invalid_time is NULL and cancel_completed_time is NULL and return_completed_time is NULL then orderid ELSE NULL END) AS beyond_edd_pending
+			, count(distinct CASE WHEN to_unixtime(current_date) > edd AND wh_inbound_time IS NOT NULL AND delivery_time IS NULL and invalid_time is NULL and cancel_completed_time is NULL and return_completed_time is NULL then orderid ELSE NULL END) AS beyond_edd_pending
     FROM orders
-    WHERE DATE(from_unixtime(seller_shipout_time)) between DATE('2021-2-1') and DATE('2021-2-28')
+    WHERE DATE(from_unixtime(seller_shipout_time)) between DATE('2021-1-1') and DATE('2021-1-31')
   	AND DATE(from_unixtime(seller_shipout_time)) < current_date
     GROUP BY 1,2,3
 )
