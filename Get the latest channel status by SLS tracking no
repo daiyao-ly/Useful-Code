@@ -1,0 +1,24 @@
+-- get lastest status
+WITH tracking AS (
+    SELECT *
+    FROM (
+        SELECT * , row_number() over (partition BY log_id ORDER BY ctime DESC) AS rn 
+        FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+        ) 
+    WHERE rn = 1
+), t2 as (
+
+SELECT consignment_no, channel_status, message, ctime
+FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
+LEFT JOIN tracking t ON o.log_id = t.log_id)
+
+SELECT a.traceno, t2.channel_status, t2.message,t2.ctime
+from shopee_regional_cb_team__my_latest_status a 
+LEFT JOIN t2 on t2.consignment_no = a.traceno
+
+-- get all status
+--SELECT consignment_no, channel_status, message, ctime
+--FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
+--LEFT JOIN shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab t ON o.log_id = t.log_id
+--WHERE consignment_no = 'SG211801053624F'
+
