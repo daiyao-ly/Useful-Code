@@ -1,0 +1,257 @@
+/* for KR-ID, SG and VN*/
+import os
+from Google import Create_Service
+import  pandas as pd
+import  numpy as np
+from datetime import datetime as dt, datetime
+from datetime import timedelta
+# the data time range past 60 days
+current_day = dt.now().strftime("%Y/%m/%d %H:%M")
+print(current_day)
+start_date = dt.now() + timedelta(days=-60)
+start_date = start_date.strftime("%Y/%m/%d %H:%M")
+print(start_date)
+
+CLIENT_SECRET_FILE = ('client_secret_559106616560-jpemvrv5qaveqpgc0piotq56k11ccm8o.apps.googleusercontent.com.json')
+API_NAME = 'sheets'
+API_VERSION = 'v4'
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+
+service = Create_Service(CLIENT_SECRET_FILE, API_NAME, API_VERSION, SCOPES)
+#from df2gspread import df2gspread as d2g
+
+spreadsheet_id = '1ldTrhyDLemb9chZigEDrxEg5PTN1W0p2y-LtM2Ot8OM'
+'''
+Read data from KRCB Tracker Materlist (INTERNAL)
+'''
+
+
+
+response = service.spreadsheets().values().get(
+
+    spreadsheetId = spreadsheet_id,
+    majorDimension = 'ROWS',
+    range = 'ALL!B1:V'  # Read from MAWB to LM AGENT
+).execute()
+# till first ATA time
+
+#print(response)
+
+
+header = response['values'][0] # the first row
+MAWB_no = response['values'][1:] # the following data
+
+
+
+pd_MAWB = pd.DataFrame(MAWB_no,columns = header)
+pd_MAWB = pd_MAWB.loc[pd_MAWB['Country']=='VN']
+pd_MAWB = pd_MAWB.dropna(axis=0, subset=['MAWB']) # drop mawb is null
+pd_MAWB['ASTYPE'] = np.where(pd_MAWB['Warehouse Handover time'].astype(bool),1,-1)
+indexNames = pd_MAWB[ pd_MAWB['ASTYPE'] == -1 ].index
+pd_MAWB.drop(indexNames,inplace = True)  # the last column is ASTYPE
+
+
+#dfNew = pd_MAWB[filter]
+#pd_MAWB['No of carton'].astype(bool)
+#pd_MAWB[pd_MAWB['No of carton'].str.strip().astype(bool)]
+#print(pd_MAWB['No of carton'].astype(bool))
+#pd_MAWB = pd_MAWB[pd_MAWB['No of carton'].notnull()]
+
+
+
+
+#unique_df = pd.unique(pd_MAWB[['MAWB','FL','Warehouse Handover time','1st ATA']].values.ravel('K'))
+#print(unique_df)
+
+#unqiue_df = pd.DataFrame(data = unique_df[0:])
+#print(unique_df)
+#print(pd_MAWB.dtypes)
+print("read the KRCB tracker")
+#print(pd_MAWB['1st ATA'])
+# get MAWB TIME by past 60 days
+today = dt.now()
+
+#end_date = today.strftime("%Y-%m-%d %H:%M:%S")
+#start_date =(dt.now() - datetime.timedelta(days=-60)).strftime("%Y-%m-%d %H:%M:%S")
+
+#print(end_date)
+#print(start_date)
+pd_MAWB['Warehouse Handover time'] = pd.to_datetime(pd_MAWB['Warehouse Handover time']).dt.strftime("%Y/%m/%d %H:%M")
+pd_MAWB['1st ATD'] = pd.to_datetime(pd_MAWB['1st ATD']).dt.strftime("%Y/%m/%d %H:%M")
+pd_MAWB['1st ATA'] = pd.to_datetime(pd_MAWB['1st ATA']).dt.strftime("%Y/%m/%d %H:%M")
+pd_MAWB['Actual hand over time to LM agent'] = pd.to_datetime(pd_MAWB['Actual hand over time to LM agent']).dt.strftime("%Y/%m/%d %H:%M")
+pd_MAWB['No of carton'] = pd.to_numeric(pd_MAWB['No of carton'])
+pd_MAWB['cw (kg)'] = pd.to_numeric(pd_MAWB['cw (kg)'])
+pd_MAWB['gw (kg)'] = pd.to_numeric(pd_MAWB['gw (kg)'])
+pd_MAWB = pd_MAWB[(pd_MAWB['Warehouse Handover time'] >= start_date) & (pd_MAWB['Warehouse Handover time'] <= current_day) ]
+pd_MAWB.to_csv('first raw data.csv')
+#print(pd_MAWB.dtypes)
+# get MAWB TIME
+MAWB_time = pd_MAWB[['MAWB','Airline','Country','FL Agent','Warehouse Handover time','1st ATD','1st ATA']]
+MAWB_delivery = pd_MAWB[['MAWB','Actual hand over time to LM agent']]
+
+handover_time = MAWB_delivery.groupby(['MAWB'])['Actual hand over time to LM agent'].min()
+handover_time = handover_time.to_frame()
+
+handover_time.fillna('', inplace=True)
+print("The actual handover time is ...")
+print(handover_time)
+
+MAWB_time = MAWB_time.set_index('MAWB')
+idx = np.unique(MAWB_time.index, return_index=True)[1]
+df_unqiue_time = MAWB_time.iloc[idx]
+df_unqiue_time.fillna(' ', inplace=True)
+print("The unique MAWB is ...")
+print(df_unqiue_time)
+#print(len(df_unqiue_time))
+
+
+
+unique_MAWB = pd_MAWB['MAWB'].unique()
+KR_PH_MAWB = pd.DataFrame(data = unique_MAWB[0:])
+#KR_PH_MAWB.rename(columns = {"0":"MAWB_no"}, inplace= True)
+KR_PH_MAWB.rename( columns={0:'MAWB_no'}, inplace=True )
+print("The unique MAWB no is ...")
+print(len(KR_PH_MAWB))
+
+print("-----------")
+total_carton = pd_MAWB.groupby(['MAWB'])['No of carton'].mean()
+total_cw = pd_MAWB.groupby(['MAWB'])['cw (kg)'].mean()
+total_gw = pd_MAWB.groupby(['MAWB'])['gw (kg)'].mean()
+MAWB_carton = total_carton.to_frame()
+MAWB_cw = total_cw.to_frame()
+MAWB_gw = total_gw.to_frame()
+print("Processing the carton, CW, GW calculation...")
+print(MAWB_carton)
+print("Connect the MAWB and carton no")
+
+'''
+connection the total carton, MAWB time by MAWB as the index
+'''
+final_MAWB_before_handover_1 =pd.merge(df_unqiue_time,MAWB_carton,left_index = True, right_index = True)
+final_MAWB_before_handover_2 = pd.merge(final_MAWB_before_handover_1,MAWB_gw,left_index=True, right_index=True)
+final_MAWB_before_handover = pd.merge(final_MAWB_before_handover_2,MAWB_cw,left_index=True, right_index=True)
+print(final_MAWB_before_handover)
+
+final_MAWB_after_handover =pd.merge(final_MAWB_before_handover,handover_time,left_index = True, right_index = True)
+final_MAWB_after_handover['mawb_no'] = final_MAWB_after_handover.index
+
+departure_city = 'ICN'
+destination_city = 'SGN'
+origin = 'KR'
+#final_MAWB_after_handover = final_MAWB_after_handover.assign(**{'departure_city': 'ICN', 'destination_city': 'MNL'})
+final_MAWB_after_handover[['dep_city', 'des_city','origin']] = pd.DataFrame([[departure_city , destination_city,origin]], index=final_MAWB_after_handover.index)
+final_MAWB_after_handover = final_MAWB_after_handover.sort_values(by='Warehouse Handover time',ascending=True)
+cols = list(final_MAWB_after_handover.columns)
+
+#final_MAWB_after_handover.to_csv('KR_PH_FLDB_data.csv', index = True)
+df_cols = ['origin',
+'country',
+'FL',
+'mawb_no',
+'mawb_carton_qty',
+'departure_city',
+'destination_city',
+'first_leg_pickup_time',
+'first_leg_pickup_time_validation',
+'batch1_1st_flight_no',
+'batch1_1st_carton_qty',
+'batch1_1st_flight_ATA',
+'batch1_1st_flight_ATA_validation',
+'batch2_1st_flight_no',
+'batch2_1st_carton_qty',
+'batch2_1st_flight_ATA',
+'batch3_1st_flight_no',
+'batch3_1st_carton_qty',
+'batch3_1st_flight_ATA',
+'batch1_2nd_flight_no',
+'batch1_2nd_carton_qty',
+'batch1_2nd_flight_ATA',
+'batch1_2nd_flight_ATA_validation',
+'batch2_2nd_flight_no',
+'batch2_2nd_carton_qty',
+'batch2_2nd_flight_ATA',
+'batch3_2nd_flight_no',
+'batch3_2nd_carton_qty',
+'batch3_2nd_flight_ATA',
+'batch1_delivery_time',
+'batch1_delivery_time_validation',
+'batch1_qty',
+'batch2_delivery_time',
+'batch2_qty',
+'batch3_delivery_time',
+'batch3_qty',
+'GW',
+'CW']
+df = pd.DataFrame(columns = df_cols)
+df['origin'] = final_MAWB_after_handover['origin']
+df['country'] = final_MAWB_after_handover['Country']
+df['FL']=final_MAWB_after_handover['FL Agent']
+df['mawb_no'] = final_MAWB_after_handover['mawb_no']
+df['mawb_carton_qty'] = final_MAWB_after_handover['No of carton']
+df['departure_city'] = final_MAWB_after_handover['dep_city']
+df['destination_city'] = final_MAWB_after_handover['des_city']
+df['first_leg_pickup_time'] = final_MAWB_after_handover['Warehouse Handover time']
+df['batch1_1st_flight_no'] = final_MAWB_after_handover ['Airline']
+df['batch1_1st_carton_qty'] = np.where(final_MAWB_after_handover['1st ATA'] != '',final_MAWB_after_handover['No of carton'],'')
+df['batch1_1st_flight_ATA'] = final_MAWB_after_handover['1st ATA']
+df['batch1_delivery_time'] =  final_MAWB_after_handover['Actual hand over time to LM agent']
+df['batch1_qty'] = np.where(final_MAWB_after_handover['Actual hand over time to LM agent'] != '',final_MAWB_after_handover['No of carton'],'')
+df['GW'] = final_MAWB_after_handover['gw (kg)']
+df['CW'] = final_MAWB_after_handover['cw (kg)']
+
+
+
+
+df.to_csv('KR-VN FL data.csv', index= False)
+print("Final MAWB info is Done...")
+
+CLIENT_SECRET_FILE = ('client_secret_559106616560-jpemvrv5qaveqpgc0piotq56k11ccm8o.apps.googleusercontent.com.json')
+API_NAME = 'sheets'
+API_VERSION = 'v4'
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
+
+service = Create_Service(CLIENT_SECRET_FILE, API_NAME, API_VERSION, SCOPES)
+
+spreadsheet_id_ot016 = '1DsU3ZUpzJeQEQYRg93ptk5gF9D-Q1IRYRz3vJQJ6zpI'
+mySpreadsheets = service.spreadsheets().get(spreadsheetId=spreadsheet_id_ot016).execute()
+
+"""
+values.pdate method
+"""
+worksheet_name_clear = 'KR-VN!'
+cell_range_insert_clear = 'A2:AL'
+
+
+
+
+value_range_body = {}
+service.spreadsheets().values().clear(
+    spreadsheetId=spreadsheet_id_ot016,
+    range=worksheet_name_clear + cell_range_insert_clear,
+    body=value_range_body
+).execute()
+
+#print(df2)
+df3 = pd.read_csv('KR-VN FL data.csv')
+#df_mawb = df3[['origin','Country','FL Agent','mawb_no','No of carton','dep_city','des_city','Warehouse Handover time']]
+df3 = df3.replace(np.nan,'',regex = True)
+#values = ( df2.values.tolist())
+
+worksheet_name = 'KR-VN!'
+cell_range_insert= 'A2:AL'
+
+value_range_body = {
+   'majorDimension': 'ROWS',
+    'values': df3.values.tolist()
+}
+
+service.spreadsheets().values().update(
+    spreadsheetId=spreadsheet_id_ot016,
+    valueInputOption='USER_ENTERED',
+    range=worksheet_name + cell_range_insert,
+    body=value_range_body
+).execute()
+
+
+print('sync done')
