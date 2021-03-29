@@ -1,3 +1,5 @@
+/* by service code */
+
 with cost AS (
     SELECT * 
     FROM (
@@ -32,6 +34,92 @@ SELECT
     ceil(cast(warehouse_weight as double) * 100)*10 as warehouse_weight
     , spx_zone
     , service_code
+    , state
+    , count(c.ordersn) as order_number
+    , sum(cast(last_mile_cost as DOUBLE))/count(c.ordersn) as LM_cost
+    , sum(cast(warehouse_cost as DOUBLE))/count(c.ordersn) as WH_cost
+    , sum(cast(first_leg_cost as DOUBLE))/count(c.ordersn) as FL_cost
+    , sum(cast(cc_cost as DOUBLE))/count(c.ordersn) as cc_cost
+    , sum(cast(asf as DOUBLE))/count(c.ordersn) as ASF
+FROM cost c
+LEFT JOIN raw r ON c.ordersn = r.ordersn
+WHERE country = 'PH'
+AND cast(departed_date as date) >= TIMESTAMP '2021-03-01'
+AND cast(departed_date as date) <= TIMESTAMP '2021-03-24'
+GROUP by 1,2,3,4
+
+
+
+/* by LM vendor */
+with cost AS (
+    SELECT * 
+    FROM (
+        SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn 
+        from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+        )
+    WHERE rn = 1
+), zone AS (
+    SELECT * 
+    FROM (
+        SELECT *, row_number() over (partition by location_id order by cast(ingestion_timestamp as bigint) DESC) rn 
+        from shopee.shopee_regional_cb_team__ph_cb_logistics_zone
+        )
+    WHERE rn = 1
+), location as (
+    SELECT log_id
+    , deliver_district_id as location_id
+    FROM shopee.shopee_sls_logistic_ph_db__logistic_request_data_tab
+), map AS (
+   SELECT CAST(service_code as VARCHAR) as service_code
+    , CAST(last_mile as VARCHAR) as last_mile
+    --, CAST(type as VARCHAR) as type
+  --  , CAST(t_p as VARCHAR) as t_p
+
+        FROM
+            (SELECT *
+                , row_number() over (partition BY data_date, service_code, whs_code ORDER BY ingestion_timestamp DESC) AS rn 
+            FROM
+                (SELECT trim(region) AS region
+                    , trim(service_code) AS service_code
+                    , trim(whs_code) AS whs_code
+                    , trim(first_leg) AS first_leg
+                    , trim(fl_handover) AS fl_handover
+                    , trim(custom_clearance) AS custom_clearance
+                    , trim(lm_handover) AS lm_handover
+                    , trim(last_mile) AS last_mile
+                    , trim(data_date) AS data_date
+                    , cast(ingestion_timestamp AS BIGINT) AS ingestion_timestamp
+                FROM shopee.shopee_regional_cb_team__service_code_supplier_tab_new
+                )
+            )
+        WHERE rn = 1
+        )
+  -- WHERE 
+ --  CAST(ingestion_timestamp AS bigint) = 
+ --  (SELECT max(CAST(ingestion_timestamp AS bigint)) 
+  --  FROM shopee_regional_cb_team__service_code_supplier_tab
+   -- )
+ , raw as (
+    SELECT o.service_code
+        , o.ordersn
+        , l.location_id
+        , z.spx_zone
+        , m.service_code
+        , m.last_mile
+    FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
+    LEFT JOIN location l ON o.log_id = l.log_id
+    LEFT JOIN zone z ON l.location_id = cast(z.location_id as BIGINT)
+    LEFT JOIN map m on m.service_code = o.service_code
+    WHERE grass_region = 'PH'
+    AND from_unixtime(wh_outbound_time) between DATE '2021-03-01' AND DATE '2021-03-24'
+)
+
+
+SELECT
+    ceil(cast(warehouse_weight as double) * 100)*10 as warehouse_weight
+    , spx_zone
+    --, r.service_code
+    , last_mile
     , state
     , count(c.ordersn) as order_number
     , sum(cast(last_mile_cost as DOUBLE))/count(c.ordersn) as LM_cost
