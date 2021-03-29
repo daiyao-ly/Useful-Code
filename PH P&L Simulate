@@ -1,0 +1,47 @@
+with cost AS (
+    SELECT * 
+    FROM (
+        SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn 
+        from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+        )
+    WHERE rn = 1
+), zone AS (
+    SELECT * 
+    FROM (
+        SELECT *, row_number() over (partition by location_id order by cast(ingestion_timestamp as bigint) DESC) rn 
+        from shopee.shopee_regional_cb_team__ph_cb_logistics_zone
+        )
+    WHERE rn = 1
+), location as (
+    SELECT log_id
+    , deliver_district_id as location_id
+    FROM shopee.shopee_sls_logistic_ph_db__logistic_request_data_tab
+), raw as (
+    SELECT service_code
+        , ordersn
+        , l.location_id
+        , z.spx_zone
+    FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
+    LEFT JOIN location l ON o.log_id = l.log_id
+    LEFT JOIN zone z ON l.location_id = cast(z.location_id as BIGINT)
+    WHERE grass_region = 'PH'
+    AND from_unixtime(wh_outbound_time) between DATE '2021-03-01' AND DATE '2021-03-24'
+)
+
+SELECT
+    ceil(cast(warehouse_weight as double) * 100)*10 as warehouse_weight
+    , spx_zone
+    , service_code
+    , state
+    , count(c.ordersn) as order_number
+    , sum(cast(last_mile_cost as DOUBLE))/count(c.ordersn) as LM_cost
+    , sum(cast(warehouse_cost as DOUBLE))/count(c.ordersn) as WH_cost
+    , sum(cast(first_leg_cost as DOUBLE))/count(c.ordersn) as FL_cost
+    , sum(cast(cc_cost as DOUBLE))/count(c.ordersn) as cc_cost
+    , sum(cast(asf as DOUBLE))/count(c.ordersn) as ASF
+FROM cost c
+LEFT JOIN raw r ON c.ordersn = r.ordersn
+WHERE country = 'PH'
+AND cast(departed_date as date) >= TIMESTAMP '2021-03-01'
+AND cast(departed_date as date) <= TIMESTAMP '2021-03-24'
+GROUP by 1,2,3,4
