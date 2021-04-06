@@ -1,0 +1,7 @@
+SELECT ordersn, consignment_no, lm_tracking_number, from_unixtime(delivery_failed_time) AS delivery_failed_time, from_unixtime(pickup_done_time) AS pickup_done_time	
+	FROM shopee_reg_cb_anlys.cb_logistics_mart_test
+	WHERE from_unixtime(pickup_done_time) between DATE '2021-03-13' and date '2021-03-15'
+	AND delivery_failed_time > pickup_done_time
+--	AND cancel_userid = -1
+	AND channel_id = 28016
+	AND payment_method = 6
