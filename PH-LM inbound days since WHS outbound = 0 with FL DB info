@@ -1,0 +1,55 @@
+WITH raw AS (
+    SELECT 
+        DATE(from_unixtime(wh_outbound_time)) as wh_outbound_date
+        , from_unixtime(wh_outbound_time) as wh_outbound_time
+        , from_unixtime(lm_inbound_time) as lm_inbound_time
+        , date_diff('day', DATE(from_unixtime(wh_outbound_time)), DATE(from_unixtime(lm_inbound_time))) as days_to_lm_inbound
+        , ordersn as lm_inbound_ord
+        , consignment_no as SLS_Track
+        , lm_tracking_number as LM_no
+     --   , count(distinct case when coalesce(return_completed_time, cancel_completed_time, invalid_time) > wh_outbound_time and lm_inbound_time is null then ordersn end) as manual_cancel_qty
+    FROM 
+        shopee_reg_cb_anlys.cb_logistics_mart_test
+    WHERE 
+        integrated_channel_origin = 'CN'
+        AND grass_region = 'PH'
+        AND DATE(from_unixtime(wh_outbound_time)) between date_add('day', -90, current_date) and date_add('day', -1, current_date)
+        AND (wh_outbound_time < lm_inbound_time or lm_inbound_time is null)
+    GROUP BY 1,2,3,4,5,6,7
+), fl_db AS (
+    SELECT *
+    FROM (
+        SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
+        FROM shopee.shopee_regional_cb_team__sls_fl_db
+        )
+    WHERE rn = 1 )
+
+
+
+
+
+
+SELECT wh_outbound_time
+    , lm_inbound_time
+  --  , sum(lm_inbound_ord) over (partition by wh_outbound_date) as wh_outbound_ord
+    , days_to_lm_inbound
+    , lm_inbound_ord
+    , SLS_Track
+    , LM_no
+    , a.mawb_no
+    , fl_db.batch1_1st_carton_qty
+    , fl_db.batch1_1st_flight_ata
+    ,fl_db.batch1_2nd_carton_qty
+    ,fl_db.batch1_2nd_flight_ata
+    , fl_db.batch1_delivery_time
+    ,fl_db.batch1_qty
+    ,fl_db.batch2_delivery_time
+    ,fl_db.batch2_qty
+  --  , sum(manual_cancel_qty) over (partition by wh_outbound_date) as manual_cancel_qty
+FROM raw
+LEFT JOIN shopee.shopee_regional_cb_team__mawb_mapping_tab	a	
+on raw.SLS_Track = a.tracking_no
+LEFT JOIN fl_db 
+on fl_db.mawb_no = a.mawb_no
+WHERE days_to_lm_inbound = 0
+ORDER BY 1,2,3,4,5,6,7
