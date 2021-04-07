@@ -1,4 +1,107 @@
---Get the cancel info based on consignment no
+-- new version -> connect with cb_logistics_mart_test
+SELECT c.consignment_no
+        , c.origin
+        , from_unixtime(coalesce(sls.cancel_completed_time, sls.invalid_time, sls.lost_time, sls.pickup_failed_time, sls.delivery_failed_time, sls.return_completed_time)) AS cancel_completed_time
+        , sls.channel_id
+        , supp.first_leg
+        , supp.custom_clearance
+        , supp.last_mile
+        , sls.service_code
+        , cast(oms.cogs AS DOUBLE)/100000/exr.exchange_rate AS cogs_usd
+        , sls.buyer_address_state
+    FROM
+        (SELECT distinct trim(consignment_no) AS consignment_no, origin
+        FROM shopee.shopee_regional_cb_team__sls_cancel_march -- ingestion csv file
+        WHERE origin = 'Local SIP'   --choose the type for different markets
+        ) c
+    LEFT JOIN
+        (SELECT distinct ordersn, consignment_no, log_id, forderid, service_code, whs_code, channel_id, grass_region, buyer_address_state, seller_shipout_time
+        , cancel_completed_time, invalid_time, pickup_failed_time, delivery_failed_time, return_completed_time, lost_time
+        ,order_placed_local_date
+         from shopee_reg_cb_anlys.cb_logistics_mart_test ) sls 
+         on c.consignment_no = sls.consignment_no
+    LEFT JOIN
+        (
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time)) AS order_placed_local_date
+        FROM shopee.shopee_oms_sg_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time)) AS order_placed_local_date
+        FROM shopee.shopee_oms_my_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time)) AS order_placed_local_date
+        FROM shopee.shopee_oms_tw_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time - 3600)) AS order_placed_local_date
+        FROM shopee.shopee_oms_id_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time - 3600)) AS order_placed_local_date
+        FROM shopee.shopee_oms_th_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time)) AS order_placed_local_date
+        FROM shopee.shopee_oms_ph_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time - 3600)) AS order_placed_local_date
+        FROM shopee.shopee_oms_vn_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        UNION ALL
+        SELECT forder_id, cogs, order_id, date(from_unixtime(order_time - 3600*11)) AS order_placed_local_date
+        FROM shopee.shopee_oms_br_db__fulfillment_order_tab
+        WHERE order_time >= to_unixtime(date_add('day',-210,current_date))
+        ) oms
+    ON sls.forderid = oms.forder_id
+     LEFT JOIN  (SELECT country, grass_date, exchange_rate
+        FROM shopee.dim_exrate
+        ) exr
+        
+    on sls.order_placed_local_date = exr.grass_date
+    and sls.grass_region = exr.country
+     LEFT JOIN
+        (SELECT data_date
+            , service_code
+            , whs_code
+            , first_leg
+            , custom_clearance
+            , last_mile
+        FROM
+            (SELECT *
+                , row_number() over (partition BY data_date, service_code, whs_code ORDER BY ingestion_timestamp DESC) AS rn 
+            FROM
+                (SELECT trim(region) AS region
+                    , trim(service_code) AS service_code
+                    , trim(whs_code) AS whs_code
+                    , trim(first_leg) AS first_leg
+                    , trim(fl_handover) AS fl_handover
+                    , trim(custom_clearance) AS custom_clearance
+                    , trim(lm_handover) AS lm_handover
+                    , trim(last_mile) AS last_mile
+                    , date(trim(data_date)) AS data_date
+                    , cast(ingestion_timestamp AS BIGINT) AS ingestion_timestamp
+                FROM shopee.shopee_regional_cb_team__service_code_supplier_tab_new
+                )
+            )
+        WHERE rn = 1
+        ) supp
+    ON sls.service_code = supp.service_code
+        AND sls.whs_code = supp.whs_code
+        AND date(from_unixtime(sls.seller_shipout_time)) = supp.data_date
+    
+
+
+
+
+
+
+
+
+
+
+--old version --> Get the cancel info based on consignment no
 SELECT c.consignment_no
         , c.type
         , from_unixtime(coalesce(ord_aud.cancel_completed_time, ord_aud.invalid_time, log_aud.lost_time, log_aud.pickup_failed_time, log_aud.delivery_failed_time, ord_aud.return_completed_time)) AS cancel_completed_time
