@@ -1,0 +1,66 @@
+/* captured the fail delivery order by day and delivered order by day
+/* use the cumulative fail delivered order/ delivered order by day as the daily failed delivery order.
+WITH days AS (
+    SELECT
+        CAST(date_column AS DATE) delivery_date
+    FROM
+        (VALUES
+            (SEQUENCE(date_add('day', -60, current_date), 
+                      date_add('day', -1, current_date), 
+                      INTERVAL '1' DAY)
+            )
+        ) AS t1(date_array)
+    CROSS JOIN
+        UNNEST(date_array) AS t2(date_column)
+), 
+days_region AS (
+    SELECT *
+    FROM days
+    CROSS JOIN (
+        SELECT distinct integrated_channel_origin, grass_region
+        FROM cb_logistics_mart_test
+        WHERE integrated_channel_origin is not null
+    )
+),
+delivery_success AS (
+    SELECT date(from_unixtime(delivery_time)) as delivery_date
+        , integrated_channel_origin
+        , grass_region
+        , count(distinct ordersn) as delivery_qty
+    FROM 
+        shopee_reg_cb_anlys.cb_logistics_mart_test
+    WHERE 
+        date(from_unixtime(delivery_time)) between date_add('day', -60, current_date) and date_add('day', -1, current_date)
+        AND integrated_channel_origin is not null
+    GROUP BY 1,2,3
+),
+delivery_fail as (
+    SELECT date(from_unixtime(delivery_failed_time)) as delivery_date
+        , integrated_channel_origin
+        , grass_region
+        , count(distinct ordersn) as delivery_failed_qty
+    FROM 
+        shopee_reg_cb_anlys.cb_logistics_mart_test
+    WHERE 
+        date(from_unixtime(delivery_failed_time)) between date_add('day', -60, current_date) and date_add('day', -1, current_date)
+        AND integrated_channel_origin is not null
+    GROUP BY 1,2,3
+)
+
+SELECT d.delivery_date
+    , d.integrated_channel_origin
+    , d.grass_region
+    , delivery_qty
+    , delivery_failed_qty
+    , SUM(delivery_qty) OVER (PARTITION BY d.integrated_channel_origin, d.grass_region ORDER BY d.delivery_date) as cumulative_delivery
+    , SUM(delivery_failed_qty) OVER (PARTITION BY d.integrated_channel_origin, d.grass_region ORDER BY d.delivery_date) as cumulative_fail_delivery
+FROM days_region d
+LEFT JOIN delivery_success s
+    ON d.delivery_date = s.delivery_date
+    AND d.integrated_channel_origin = s.integrated_channel_origin
+    AND d.grass_region = s.grass_region
+LEFT JOIN delivery_fail f
+    ON d.delivery_date = f.delivery_date
+    AND d.integrated_channel_origin = f.integrated_channel_origin
+    AND d.grass_region = f.grass_region
+ORDER BY 2,3,1
