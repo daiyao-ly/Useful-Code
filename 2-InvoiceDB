@@ -1,0 +1,119 @@
+WITH t1 AS
+(
+SELECT
+	cast(invoice_no as VARCHAR) invoice_no
+	, cast(invoice_issue_date as VARCHAR) invoice_issue_date
+	, cast(cost_type as VARCHAR) as cost_type
+	, cast(vendor_name as VARCHAR) as vendor_name
+	, cast(original_country as VARCHAR) as original_country
+	, cast(destination_country as VARCHAR) as destination_country
+	, cast(carton_no as VARCHAR) carton_no
+	, cast(sls_tracking_no as VARCHAR) as sls_tracking_no
+	, cast(last_mile_tracking_no as VARCHAR) as last_mile_tracking_no
+	, cast(mawb_no as VARCHAR) as mawb_no
+--	, cast(shopee_mawb_no_check as VARCHAR) as shopee_mawb_no_check
+	, cast(pickup_date as VARCHAR) as pickup_date
+	, cast(flight_no as VARCHAR) as flight_no
+	, cast(flight_date as VARCHAR) as flight_date
+	, case when carton_quantity = 'Blank'  then  0
+	        ELSE cast (carton_quantity as DOUBLE)
+	       END as carton_quantity
+	, case when parcel_quantity = 'Blank'  then  0
+	        ELSE cast (parcel_quantity as DOUBLE)
+	       END as parcel_quantity
+
+	, cast(tp_type as VARCHAR) as tp_type
+	, case when gross_weight = 'Blank'  then  0
+	        ELSE cast (gross_weight as DOUBLE)
+	       END as gross_weight
+	, case when chargable_weight = 'Blank'  then  0
+	        ELSE cast (chargable_weight as DOUBLE)
+	       END as chargable_weight
+	, case when transportation_cost = 'Blank'  then  0
+	        ELSE cast (transportation_cost as DOUBLE)
+	       END as transportation_cost
+	, cast(transportation_currency as VARCHAR) as transportation_currency
+	, case when cc_cost = 'Blank'  then  0
+	        ELSE cast (cc_cost as DOUBLE)
+	       END as cc_cost
+
+	, cast(cc_currency as VARCHAR) as cc_currency
+	, case when other_cost = 'Blank' then  0
+	        ELSE cast (other_cost as DOUBLE)
+	       END as other_cost
+
+	, cast(other_currency as VARCHAR) as other_currency
+	, case when duty_cost = 'Blank' then  0
+	        ELSE cast (duty_cost as DOUBLE)
+	       END as duty_cost
+	, cast(duty_currency as VARCHAR) as duty_currency
+	,  case when special_cost = 'Blank'  then  0
+	        ELSE cast (special_cost as DOUBLE)
+	       END as special_cost
+	, cast(special_currency as VARCHAR) as special_currency
+	,  case when paid_amount = 'Blank'  then  0
+	        ELSE cast (paid_amount as DOUBLE)
+	       END as paid_amount
+
+	, cast(paid_currency as VARCHAR) as paid_currency
+	, CAST(ingestion_timestamp AS bigint) as ingestion_timestamp
+    , from_unixtime(CAST(ingestion_timestamp AS bigint)) as ingestion_time
+FROM shopee_sz.shopee_sz_bi_team__fl_cc_invoice__done
+--WHERE CAST(ingestion_timestamp AS bigint) = (SELECT max(CAST(ingestion_timestamp AS bigint)) FROM shopee_sz.shopee_sz_bi_team__fl_cc_invoice__done)
+)
+
+, t2 AS
+	(
+	SELECT *
+	FROM
+	(
+	SELECT *, row_number() over (partition by vendor_name, cost_type, original_country, destination_country, tp_type, invoice_no, carton_no, mawb_no , last_mile_tracking_no order by ingestion_timestamp DESC) rn
+	from t1
+	)
+	WHERE rn = 1
+		AND invoice_issue_date in 
+		(
+            '2021-02-28','2021-02-15','2021-02-28 00:00:00'
+		)
+	), SLS_weight AS (
+    SELECT consignment_no, actual_weight
+    from shopee_reg_cb_anlys.cb_logistics_mart_test
+    
+), b AS (
+    select * FROM
+
+        (SELECT *, row_number() over (partition by tracking_no order by cast(ingestion_timestamp as bigint) DESC) rn 
+            from shopee_regional_cb_team__mawb_mapping_tab)
+    where rn = 1
+), t3 AS (
+SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn 
+from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+)
+
+, t4 AS (
+select * from t3 where rn = 1
+)
+
+
+select
+	vendor_name
+	, tp_type
+	, original_country
+	, destination_country
+	, t2.mawb_no as mawb_no_in_vendor_invoice_db
+	, distinct b.tracking_no 
+	, sum(cast(SLS_weight.actual_weight as double)/1000) as sls_actual_weight /* 如果我选择拉出这个mawb_no 每个订单的actual weight 相加，应该是857 kg , 跟MNF 的一致 */
+	
+	/* 如果我sum weight 的话， 得出来的结果就很大 39430 kg  */
+
+
+FROM t2
+LEFT JOIN  b on t2.mawb_no = cast(b.mawb_no as varchar)
+LEFT JOIN SLS_weight on  SLS_weight.consignment_no = b.tracking_no
+WHERE vendor_name = 'Kerry' and destination_country = 'MY' and t2.mawb_no in (
+'112-84861976'
+
+
+)
+group by 1, 2, 3, 4, 5
+order by 1, 2, 3, 4, 5
