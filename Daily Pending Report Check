@@ -1,0 +1,110 @@
+-- **************************************************
+-- ** Subject: Pending Report Summary
+-- ** Author: Freddy Chou
+-- ** Reference: Pending Report
+-- ** Description: Monitor pending orders status
+-- ** Google Sheet: https://docs.google.com/spreadsheets/d/1YMlgs7vuE-XpsWIajXhDDaP382hr2BF9-ESt3Rjd7sA/edit#gid=7349890
+-- ** Data Nexus: https://data-nexus.idata.shopeemobile.com/project/475/workflow/49800/edit
+-- *************************************************
+
+/* Checking daily pending report orders in a specific service code , filter days since whs outbound XX days without LM inbound status*/
+/* Can change the logistics status */
+
+WITH fm AS (
+    SELECT 
+        m.sls_tn
+        , t.fm_tn
+        , min(IF(t.fm_status = 3, t.update_time, NULL)) AS fm_pickup_time
+    FROM 
+        shopee.shopee_sls_logistic_db__fm_tracking_tab_lfs_union_tmp t
+        LEFT JOIN shopee.shopee_sls_logistic_db__fm_tn_sls_tn_map_lfs_union_tmp m ON t.fm_tn = m.fm_tn
+    WHERE 
+        DATE(from_unixtime(t.update_time)) >= date_add('day', -100, current_date)
+        AND t.grass_date >= date_add('day', -100, current_date)
+    GROUP BY 1,2
+), zone AS (
+        SELECT 
+            z1.country
+            , z1.state
+            , z1.zone
+        FROM 
+            shopee.shopee_regional_cb_team__sls_state_zone_mapping_tab z1
+            JOIN (select max(ingestion_timestamp) ingestion_timestamp from shopee.shopee_regional_cb_team__sls_state_zone_mapping_tab where ingestion_timestamp != '') z2 on z2.ingestion_timestamp = z1.ingestion_timestamp
+  		WHERE z1.ingestion_timestamp != ''
+        GROUP BY 1,2,3
+), orders AS (
+    SELECT distinct 
+        l.ordersn
+        , l.consignment_no
+        , l.lm_tracking_number
+        , l.grass_region
+        , l.channel_id
+        , l.service_code
+        , l.whs_code
+        , CASE  
+            WHEN grass_region = 'ID' AND buyer_address_state in ('BANTEN', 'DKI JAKARTA', 'JAWA BARAT') then 'A1'
+    		WHEN grass_region = 'ID' AND buyer_address_state in ('DI YOGYAKARTA', 'JAWA TENGAH', 'JAWA TIMUR') then 'A2'
+            WHEN grass_region = 'ID' AND buyer_address_state in ('BALI', 'BANGKA BELITUNG', 'BENGKULU', 'JAMBI', 'KALIMANTAN BARAT', 
+             'KALIMANTAN SELATAN', 'KALIMANTAN TENGAH', 'KALIMANTAN TIMUR', 'KALIMANTAN UTARA', 'KEPULAUAN RIAU', 
+             'LAMPUNG', 'NANGGROE ACEH DARUSSALAM (NAD)', 'RIAU', 'SUMATERA BARAT', 'SUMATERA SELATAN', 'SUMATERA UTARA', 'SULAWESI SELATAN') then 'B'
+            WHEN grass_region = 'ID' then 'C'
+            WHEN grass_region = 'MY' AND buyer_address_state in ('Sabah', 'Labuan') then 'C'
+            WHEN grass_region = 'MY' AND buyer_address_state in ('Sarawak') then 'B'
+            WHEN grass_region = 'MY' then 'A'
+            WHEN grass_region = 'PH' AND (buyer_address_state in ('Metro Manila') 
+            							 OR (buyer_address_state in ('North Luzon') AND buyer_address_city in ('Bulacan'))
+                                         OR (buyer_address_state in ('South Luzon') AND (buyer_address_city in ('Cavite', 'Laguna')
+                                         											   OR (buyer_address_city in ('Laguna') AND buyer_address_district in ('Cabuyao','Santa Rosa City','Binan City','Calamba City','San Pedro'))))) then 'A'
+            WHEN grass_region = 'PH' AND buyer_address_state in ('North Luzon', 'South Luzon') then 'B'
+            WHEN grass_region = 'PH' AND buyer_address_state in ('Visayas') then 'C'
+            WHEN grass_region = 'PH' then 'D'
+            WHEN grass_region = 'TH' AND buyer_address_state in ('จังหวัดกรุงเทพมหานคร', 'จังหวัดนนทบุรี', 'จังหวัดปทุมธานี', 'จังหวัดสมุทรปราการ') then 'A'
+            WHEN grass_region = 'TH' AND buyer_address_state in ('จังหวัดนราธิวาส', 'จังหวัดปัตตานี', 'จังหวัดยะลา') then 'C'
+            WHEN grass_region = 'TH' then 'B'
+            WHEN grass_region = 'VN' then z.zone
+            ELSE '-'
+          END AS zone
+        , CASE  
+            WHEN coalesce(l.deliver_to_store_time, l.delivery_time) is NOT NULL then 'delivered'
+            WHEN l.lm_inbound_time is NOT NULL then '5_last_mile_not_deliver'
+            WHEN l.wh_outbound_time is NOT NULL then '4_not_lm_inbound'
+            WHEN l.wh_inbound_time is NOT NULL then '3_warehouse_not_shipped_out'
+            WHEN fm.fm_pickup_time is NOT NULL then '2_1_fm_pickup_wh_not_in'
+            WHEN l.seller_shipout_time is NOT NULL then '2_wh_not_in'
+            ELSE '1_seller_not_ship'
+          END AS logistics_stage
+        , CASE  
+            WHEN ceiling((to_unixtime(current_date) - coalesce(lm_inbound_time, wh_outbound_time, wh_inbound_time, fm_pickup_time, seller_shipout_time, shipping_confirm_time))/86400) > 21 then 21
+            WHEN ceiling((to_unixtime(current_date) - coalesce(lm_inbound_time, wh_outbound_time, wh_inbound_time, fm_pickup_time, seller_shipout_time, shipping_confirm_time))/86400) < 1 then 1
+            ELSE ceiling((to_unixtime(current_date) - coalesce(lm_inbound_time, wh_outbound_time, wh_inbound_time, fm_pickup_time, seller_shipout_time, shipping_confirm_time))/86400)
+          END AS pending_days    
+    FROM 
+        shopee_reg_cb_anlys.cb_logistics_mart_test l
+        LEFT JOIN fm ON l.consignment_no = fm.sls_tn
+        LEFT JOIN zone z ON l.buyer_address_state = z.state
+    WHERE 
+        l.grass_region not in ('BR', 'MX')
+        AND l.integrated_channel_origin is not null
+        AND from_unixtime(l.shipping_confirm_time) >= date_add('day', -90, current_date)
+        AND l.status_ext in (1,2)
+        AND l.logistics_status not in (5, 9) -- order not delivered or ready but logistics not created yet
+        AND l.consignment_no is not null
+        AND coalesce(l.deliver_to_store_time, l.delivery_time) is NULL
+        AND l.service_code not in ('SGNJ', 'SGQT', 'SH01', 'SH02', 'SOB', 'SOC') -- no need to check SG ECO & separate SG sea-shipping
+        AND l.service_code not in ('MAS1', 'MAS2') -- separate MY sea shipping
+)
+
+SELECT
+    grass_region
+    , logistics_stage
+    , CASE 
+        WHEN logistics_stage = '5_last_mile_not_deliver' AND zone != '-' then concat(service_code, '_', zone)
+        WHEN logistics_stage in ('5_last_mile_not_deliver', '4_not_lm_inbound') then service_code    
+        ELSE 'All'
+      END AS label
+    --, pending_days
+    , consignment_no
+FROM orders
+WHERE service_code in ('T23','T24') and logistics_stage in ('4_not_lm_inbound') and pending_days >=6 
+GROUP BY 1,2,3,4
+ORDER BY 1,2,3,4
