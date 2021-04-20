@@ -1,0 +1,237 @@
+WITH expected_info AS (
+        SELECT
+            order_id
+            ,extinfo.expected_receive_time AS expected_receive_time
+        FROM shopee.shopee_order_logistics_db__order_logistics_tab
+        WHERE
+            grass_region != ''
+            AND date(from_unixtime(create_time)) >= current_date - interval '89' day
+    )
+
+    ,fm_info AS (
+        SELECT
+            b.sls_tn
+            ,a.fm_tn
+            ,MIN(fm_pickup_done_time) AS fm_pickup_done_time
+        FROM 
+            (SELECT
+                fm_tn
+                ,IF(fm_status=3, update_time, null) AS fm_pickup_done_time
+            FROM shopee.shopee_sls_logistic_db__fm_tracking_tab_lfs_union_tmp
+            WHERE
+                tz_type = 'local'
+                AND grass_date >= date('2020-12-01')
+                AND date(from_unixtime(update_time)) >= current_date - interval '100' day
+            ) AS a
+        LEFT JOIN
+            (SELECT distinct
+                sls_tn
+                ,fm_tn
+            FROM shopee.shopee_sls_logistic_db__fm_tn_sls_tn_map_lfs_union_tmp
+            WHERE
+                tz_type = 'local'
+                AND grass_date >= date('2021-01-01')
+            ) AS b
+            ON a.fm_tn = b.fm_tn
+        GROUP BY 1, 2
+    )
+
+    ,lm_inbound_sg AS (
+        SELECT 
+            'SG' AS grass_region
+            ,log_id
+            ,MIN(IF(regexp_like(lower(message), 'parcel has arrived at roadbull sorting centre'), update_time, null)) 
+                AS roadbull_inbound_time
+            ,MIN(IF(regexp_like(lower(message), 'shipment lodged into transshipment hub local postal agent|shipment received at hub/ branch'), update_time, null)) 
+                AS twsip_qt_lm_inbound_time
+            ,MIN(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility'), update_time, null)) 
+                AS twsip_njv_lm_inbound_time
+            ,MIN(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility|order has arrived at sorting hub'), update_time, null)) 
+                AS mysip_lm_inbound_time
+            ,MIN(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse|inbound in transit to sorting center|order received by local sorting centre'), update_time, null))
+                AS idsip_lm_inbound_time
+        FROM shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+        WHERE 
+            date(from_unixtime(update_time)) >= current_date - interval '100' day
+        GROUP BY 1, 2
+    )
+
+    ,lm_inbound_my AS (
+        SELECT 
+            'MY' AS grass_region
+            ,log_id
+            ,MIN(IF(regexp_like(lower(message), 'picked up'), update_time, null)) 
+                AS twsip_lm_inbound_time
+            ,MIN(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, null)) 
+                AS idsip_lm_inbound_time
+        FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+        WHERE 
+            date(from_unixtime(update_time)) >= current_date - interval '100' day
+        GROUP BY 1, 2
+    )
+    
+    ,lm_inbound_id AS (
+        SELECT 
+            'ID' AS grass_region
+            ,log_id
+            ,MIN(IF(regexp_like(lower(message), 'ninja xpress sorting facility'), update_time, NULL)) 
+                AS twsip_lm_inbound_time
+        FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+        WHERE 
+            date(from_unixtime(update_time)) >= current_date - interval '100' day
+        GROUP BY 1, 2
+    )
+
+    ,logistical_info AS (
+        SELECT
+            a.order_id
+            ,a.origin
+            ,(CASE
+                when a.grass_region = 'SG' and a.channel_id = 18028 and a.service_code IN ('SOB', 'SOC') and d.shipment_provider = 'Singpost'
+                    then 'SG Economy'
+                else a.grass_region
+                END) AS destination
+            ,a.pay_date
+            ,a.payment_method
+            ,a.shipping_confirm_time
+            ,a.seller_shipout_time
+            ,COALESCE(c.fm_pickup_done_time, a.pickup_done_time) AS pickup_done_time
+            ,a.wh_outbound_time
+            ,(CASE
+                when a.channel_id IN (18043, 18042) then COALESCE(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
+                when a.channel_id IN (18044) then sg.idsip_lm_inbound_time -- deprecated
+                when a.channel_id IN (18052) then sg.mysip_lm_inbound_time -- deprecated
+                when a.channel_id IN (28044) then my.idsip_lm_inbound_time -- deprecated
+                when a.channel_id IN (28042, 28043) then my.twsip_lm_inbound_time
+                when a.channel_id IN (88042) then id.twsip_lm_inbound_time
+                when a.service_code IN ('S03', 'S04', 'S97', 'S98') then COALESCE(sg.roadbull_inbound_time, a.lm_inbound_time)
+                else a.lm_inbound_time
+                END) AS lm_inbound_time
+            ,COALESCE(a.deliver_to_store_time, a.delivery_time) AS delivery_time
+            ,a.delivery_failed_time
+            ,a.invalid_time
+            ,a.cancel_completed_time
+            ,a.return_completed_time
+            ,a.cancel_time
+            ,b.expected_receive_time
+        FROM
+            (SELECT
+                integrated_channel_origin AS origin
+                ,grass_region
+                ,(CASE 
+                    when grass_region in ('ID', 'TH', 'VN') then IF(payment_method=6, date(from_unixtime(shipping_confirm_time-3600)), date(from_unixtime(pay_time-3600)))
+                    when grass_region in ('BR') then IF(payment_method=6, date(from_unixtime(shipping_confirm_time-11*3600)), date(from_unixtime(pay_time-11*3600)))
+                    when grass_region in ('MX') then IF(payment_method=6, date(from_unixtime(shipping_confirm_time-14*3600)), date(from_unixtime(pay_time-14*3600))) 
+                    else IF(payment_method = 6, date(from_unixtime(shipping_confirm_time)), date(from_unixtime(pay_time))) 
+                    END) AS pay_date -- Local Time
+                /*
+                ,IF(payment_method=6, date(from_unixtime(shipping_confirm_time)), date(from_unixtime(pay_time)))
+                    AS pay_date -- SG Time
+                */
+                ,orderid AS order_id
+                ,ordersn AS order_sn
+                ,consignment_no
+                ,log_id
+                ,channel_id
+                ,service_code
+                ,payment_method
+                ,shipping_confirm_time
+                ,seller_shipout_time
+                ,pickup_done_time
+                ,wh_outbound_time
+                ,lm_inbound_time
+                ,deliver_to_store_time
+                ,delivery_time
+                ,delivery_failed_time
+                ,invalid_time
+                ,cancel_completed_time
+                ,return_completed_time
+                ,COALESCE(return_completed_time, cancel_completed_time, invalid_time) AS cancel_time
+            FROM shopee_reg_cb_anlys.cb_logistics_mart_test
+            WHERE integrated_channel_origin is not NULL
+            ) AS a
+        LEFT JOIN expected_info AS b
+            ON a.order_id = b.order_id
+        LEFT JOIN fm_info AS c
+            ON a.consignment_no = c.sls_tn
+        LEFT JOIN
+            (SELECT distinct
+                ordersn AS order_sn
+                ,shipment_provider
+            FROM shopee.shopee_sls_logistic_sg_db__logistic_request_tab
+            ) AS d
+            ON a.order_sn = d.order_sn
+        LEFT JOIN lm_inbound_sg AS sg
+            ON a.grass_region = sg.grass_region AND a.log_id = sg.log_id
+        LEFT JOIN lm_inbound_my AS my
+            ON a.grass_region = my.grass_region AND a.log_id = my.log_id
+        LEFT JOIN lm_inbound_id AS id
+            ON a.grass_region = id.grass_region AND a.log_id = id.log_id
+    )
+
+    ,data_v1 AS (
+        SELECT
+            origin,
+            destination
+           -- ,pay_date
+            ,COUNT(distinct order_id) AS "0_paid_cod_confirmed"
+
+         --   ,COUNT(distinct IF(seller_shipout_time IS NOT NULL or pickup_done_time IS NOT NULL or wh_outbound_time IS NOT NULL or lm_inbound_time IS NOT NULL or delivery_time IS NOT NULL, order_id, null)) 
+          --      AS "1_seller_shipout"
+            ,COUNT(distinct IF(pickup_done_time IS NOT NULL or wh_outbound_time IS NOT NULL or lm_inbound_time IS NOT NULL or delivery_time IS NOT NULL, order_id, null))
+                AS "2_pickup_done"
+       --     ,COUNT(distinct IF(wh_outbound_time IS NOT NULL or lm_inbound_time IS NOT NULL or delivery_time IS NOT NULL, order_id, null)) 
+       --         AS "3_wh_outbound"
+       --     ,COUNT(distinct IF(lm_inbound_time IS NOT NULL or delivery_time IS NOT NULL, order_id, null)) 
+        --        AS "4_lm_inbound"
+        --    ,COUNT(distinct IF(delivery_time IS NOT NULL and cancel_time IS NULL, order_id, null))
+       --         AS "5_delivered"
+            
+       /*     ,COUNT(distinct IF(seller_shipout_time IS NULL and pickup_done_time IS NULL and wh_outbound_time IS NULL and lm_inbound_time IS NULL and delivery_time IS NULL and cancel_time IS NULL, order_id, null))
+                AS "P1_nonshipout"
+            ,COUNT(distinct IF(seller_shipout_time IS NOT NULL and pickup_done_time IS NULL and wh_outbound_time IS NULL and lm_inbound_time IS NULL and delivery_time IS NULL and cancel_time IS NULL, order_id, null))
+                AS "P2_shipout_nonreceived"
+            ,COUNT(distinct IF(pickup_done_time IS NOT NULL and wh_outbound_time IS NULL and lm_inbound_time IS NULL and delivery_time IS NULL and cancel_time IS NULL, order_id, NULL))
+                AS "P3_stuck_at_wh"
+            ,COUNT(distinct IF(wh_outbound_time IS NOT NULL and lm_inbound_time IS NULL and delivery_time IS NULL and cancel_time IS NULL, order_id, null))
+                AS "P4_stuck_at_fl"
+            ,COUNT(distinct IF(lm_inbound_time IS NOT NULL and delivery_time IS NULL and cancel_time IS NULL, order_id, null))
+                AS "P5_pending_delivery"
+            
+            ,COUNT(distinct IF(seller_shipout_time IS NULL and cancel_time IS NOT NULL, order_id, null)) 
+                AS "C1_cancel_before_shipout"
+            ,COUNT(distinct IF(seller_shipout_time IS NOT NULL and pickup_done_time IS NULL and wh_outbound_time IS NULL and lm_inbound_time IS NULL and delivery_time IS NULL and cancel_time IS NOT NULL, order_id, null)) 
+                AS "C2_cancel_after_shipout"
+            ,COUNT(distinct IF((pickup_done_time is NOT NULL or wh_outbound_time is NOT NULL or lm_inbound_time is NOT NULL or delivery_time IS NOT NULL) and cancel_time IS NOT NULL, order_id, null))
+                AS "C3_fail_rr_reject"
+            ,COUNT(distinct IF((pickup_done_time is NOT NULL or wh_outbound_time is NOT NULL or lm_inbound_time is NOT NULL or delivery_time IS NOT NULL) and delivery_failed_time IS NOT NULL and payment_method != 6, order_id, null))
+                AS "C3_failed_delivery"
+            ,COUNT(distinct IF((pickup_done_time is NOT NULL or wh_outbound_time is NOT NULL or lm_inbound_time is NOT NULL or delivery_time IS NOT NULL) and delivery_failed_time IS NOT NULL and payment_method = 6, order_id, null))
+                AS "C3_cod_reject"
+            ,COUNT(distinct IF((pickup_done_time is NOT NULL or wh_outbound_time is NOT NULL or lm_inbound_time is NOT NULL or delivery_time IS NOT NULL) and delivery_failed_time IS NULL and return_completed_time IS NOT NULL, order_id, null))
+                AS "C3_rr"
+            ,COUNT(distinct IF((pickup_done_time is NOT NULL or wh_outbound_time is NOT NULL or lm_inbound_time is NOT NULL or delivery_time IS NOT NULL) and delivery_failed_time IS NULL and return_completed_time IS NULL and cancel_time is NOT NULL, order_id, null))
+                AS "C3_others"
+            
+            ,COUNT(distinct IF(to_unixtime(current_date) > expected_receive_time and pickup_done_time IS NOT NULL and delivery_time IS NULL and invalid_time is NULL and cancel_completed_time is NULL and return_completed_time is NULL, order_id, null))
+                AS beyond_edd_pending */
+        FROM logistical_info
+        WHERE
+            pay_date >= date('2021-03-16')
+            AND pay_date <= date ('2021-04-15')
+        GROUP BY 1,2
+    )
+
+    SELECT
+        origin,
+        destination
+       -- ,pay_date
+        ,"0_paid_cod_confirmed"
+       -- ,"1_seller_shipout"
+       -- ,"P1_nonshipout"
+       -- ,"C1_cancel_before_shipout"
+        ,"2_pickup_done"
+        --, sum("2_pickup_done")/sum("0_paid_cod_confirmed") as pickup_rate
+
+    FROM data_v1
+    ORDER BY 1,2
