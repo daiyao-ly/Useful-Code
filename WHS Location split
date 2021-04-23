@@ -1,0 +1,77 @@
+是先去logistics tracking tab裡面抓location
+wh_location AS (
+   SELECT *
+   FROM
+     (
+      SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_tw_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_th_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_ph_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_vn_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+UNION ALL       SELECT
+        log_id
+      , location
+      , "row_number"() OVER (PARTITION BY log_id ORDER BY update_time ASC) rn
+      FROM
+        shopee.shopee_sls_logistic_br_db__logistic_tracking_tab
+      WHERE ((status = 2) AND (location <> ''))
+   ) 
+   WHERE (rn = 1)
+   
+   
+   然後用location判斷
+   CASE WHEN lower(wh_location.location) in ('shiyan', 'jiehe', 'shenzhen') then 'TWS01'
+				WHEN lower(wh_location.location) in ('hongkong') then 'TWS02'
+				WHEN lower(wh_location.location) in ('shanghai', 'sh') then 'ECP01-Shanghai'
+				WHEN lower(wh_location.location) in ('yiwu', 'yw') then 'ECP01-Yiwu'
+				WHEN lower(wh_location.location) in ('quanzhou', 'qz') then 'ECP01-Quanzhou'
+				WHEN lower(wh_location.location) in ('korea') then 'TWS03'
+			END AS whs_code
+   
+   
+   
+   
