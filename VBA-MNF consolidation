@@ -1,0 +1,79 @@
+Sub CombineWorkbook()
+    Application.DisplayAlerts = False
+    '----------------------------------------------------------
+
+    '----------------------------------------------------------
+    Dim F As FileDialog
+    Set F = Application.FileDialog(msoFileDialogFilePicker)
+    F.Filters.Clear
+    F.Filters.Add "Select Excel", "*.xls;*.xlsx;*.xlsm"
+    F.Show
+    '----------------------------------------------------------
+    Dim filePath As Variant
+    Dim excel As Workbook
+    Dim sheet As Worksheet
+    Dim AddSheet As Worksheet
+    Dim Get_mawb As String
+    Dim mawb_no As String
+    Dim lRow As Long
+    Dim lCol As Long
+    '----------------------------------------------------------
+    For Each filePath In F.SelectedItems
+        Set excel = Workbooks.Open(filePath)
+        'Dim ExcelName As Variant
+        'ExcelName = Split(excel.Name, ".")
+        'ExcelName = ExcelName(0)
+        '- - - - - - - - - - - - - - - - - - - - - - - - - - -
+        excel.Worksheets(1).Cells.Copy
+        Set NewSheet = ThisWorkbook.Sheets.Add
+        NewSheet.Cells.PasteSpecial
+        NewSheet.Name = "Copy_" & excel.Name
+       
+        '- - - - - - - - - - - - - - - - - - - - - - - - - - -
+        excel.Close False
+    Next
+    Get_mawb = Worksheets(2).Name
+    mawb_no = Mid(Get_mawb, 6, 12)
+    '----------------------------------------------------------
+    Call CombineWorksheet
+    lCol = Cells(1, Columns.Count).End(xlToLeft).Column
+    lRow = Cells(Rows.Count, 1).End(xlUp).Row
+    
+    
+    
+    For Each CheckSheet In ThisWorkbook.Sheets
+        If CheckSheet.Name <> "Sheet" Then
+            CheckSheet.Delete
+        End If
+    Next
+    
+
+
+    ActiveWorkbook.SaveAs Filename:= _
+        "C:\Users\dai.yao\Desktop\ID-MY MNF\" & mawb_no & ".xlsx", FileFormat:= _
+        xlOpenXMLWorkbook, CreateBackup:=False
+    ActiveWindow.SmallScroll Down:=-3
+    Application.DisplayAlerts = True
+    
+End Sub
+
+Sub CombineWorksheet()
+    Dim J As Integer
+    On Error Resume Next
+    Sheets(1).Select
+    Worksheets.Add
+    Sheets(1).Name = "Sheet"
+    Sheets(2).Activate
+    Range("A1").EntireRow.Select
+    Selection.Copy Destination:=Sheets(1).Range("A1")
+    For J = 2 To Sheets.Count
+        Sheets(J).Activate
+        'c = Sheets(J).Range("IV1").End(xlToLeft).Column
+        'r = Sheets(J).Range("A65536").End(xlUp).Row
+         r = Sheets(J).Cells(Rows.Count, 1).End(xlUp).Row
+         c = Sheets(J).Cells(1, Columns.Count).End(xlToLeft).Column
+        Range("A2").Resize(r - 1, c).Select
+        Selection.Copy Destination:=Sheets(1).Range("A655360").End(xlUp)(2)
+    Next
+End Sub
+
