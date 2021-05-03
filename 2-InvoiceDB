@@ -47,6 +47,11 @@ SELECT
 	        ELSE cast (duty_cost as DOUBLE)
 	       END as duty_cost
 	, cast(duty_currency as VARCHAR) as duty_currency
+	, case when document_cost = 'Blank' then  0
+	        ELSE cast (document_cost as DOUBLE)
+	       END as document_cost
+	, cast(document_currency as VARCHAR) as document_currency	
+	
 	,  case when special_cost = 'Blank'  then  0
 	        ELSE cast (special_cost as DOUBLE)
 	       END as special_cost
@@ -67,53 +72,138 @@ FROM shopee_sz.shopee_sz_bi_team__fl_cc_invoice__done
 	SELECT *
 	FROM
 	(
-	SELECT *, row_number() over (partition by vendor_name, cost_type, original_country, destination_country, tp_type, invoice_no, carton_no, mawb_no , last_mile_tracking_no order by ingestion_timestamp DESC) rn
+	SELECT *, row_number() over (partition by vendor_name, cost_type, original_country, destination_country, tp_type, invoice_no, carton_no, mawb_no, last_mile_tracking_no  order by ingestion_timestamp DESC) rn
 	from t1
 	)
 	WHERE rn = 1
 		AND invoice_issue_date in 
 		(
-            '2021-02-28','2021-02-15','2021-02-28 00:00:00'
+		'2021-03-31','2021-03-15','2021-03-31 00:00:00','2021-03-15 00:00:00'
 		)
-	), SLS_weight AS (
-    SELECT consignment_no, actual_weight
-    from shopee_reg_cb_anlys.cb_logistics_mart_test
-    
-), b AS (
+	--	and vendor_name = 'Kerry' and cost_type = 'CC'
+	)
+, b AS (
     select * FROM
 
         (SELECT *, row_number() over (partition by tracking_no order by cast(ingestion_timestamp as bigint) DESC) rn 
-            from shopee_regional_cb_team__mawb_mapping_tab)
-    where rn = 1
-), t3 AS (
-SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn 
-from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
-)
-
-, t4 AS (
-select * from t3 where rn = 1
-)
+            from shopee.shopee_regional_cb_team__mawb_mapping_tab)
+    where rn = 1) 
 
 
-select
-	vendor_name
-	, tp_type
-	, original_country
-	, destination_country
-	, t2.mawb_no as mawb_no_in_vendor_invoice_db
-	, distinct b.tracking_no 
-	, sum(cast(SLS_weight.actual_weight as double)/1000) as sls_actual_weight /* 如果我选择拉出这个mawb_no 每个订单的actual weight 相加，应该是857 kg , 跟MNF 的一致 */
+-- SELECT *
+-- FROM t2 
+-- WHERE special_cost > 0 or duty_cost > 0
+
+, t3 as 
+    (
+	SELECT 
+	t2.*
+	, cast(sls.actual_weight as double)/1000 as sls_actual_weight
+	, cast(sls.charged_weight as double)/1000 as sls_charged_weight
+	, consignment_no as sls_qty -- currently sls_charged_weight is almost equal to sls_actual_weight
+	FROM t2 
+	LEFT JOIN b on t2.mawb_no = cast(b.mawb_no as varchar)
+	LEFT JOIN (SELECT distinct consignment_no, actual_weight, charged_weight FROM shopee_reg_cb_anlys.cb_logistics_mart_test) sls on cast(b.tracking_no as varchar) = sls.consignment_no
+    )
+
+, w as 
+	(
+	SELECT 
+	COALESCE(vendor_name, '-') as vendor_name
+	, COALESCE(cost_type, '-') as cost_type
+	, COALESCE(original_country, '-') as original_country
+	, COALESCE(destination_country, '-') as destination_country
+	, COALESCE(tp_type, '-') as tp_type
+	, sum(sls_actual_weight) as sls_actual_weight
+	, sum(sls_charged_weight) as sls_charged_weight
+	, COALESCE(transportation_currency, '-') as transportation_currency
+	, COALESCE(cc_currency, '-') as cc_currency
+	, COALESCE(other_currency, '-') as other_currency
+	, COALESCE(duty_currency, '-') as duty_currency
+
+	, COALESCE(special_currency, '-') as special_currency
+	, COALESCE(paid_currency, '-') as paid_currency
+	, COALESCE(document_currency, '-') as document_currency
+	, count( distinct sls_qty) as sls_qty
+	FROM t3
+	group by 1, 2, 3, 4, 5, 8, 9 , 10, 11, 12, 13, 14
+	)
+
+, s as 
+	(
+	SELECT 
+	COALESCE(vendor_name, '-') as vendor_name
+	, COALESCE(cost_type, '-') as cost_type
+	, COALESCE(original_country, '-') as original_country
+	, COALESCE(destination_country, '-') as destination_country
+	, COALESCE(tp_type, '-') as tp_type
+	, count(*) as record_number
+	, sum(parcel_quantity) as parcel_qty
+	, sum(carton_quantity) as carton_qty
+	, sum(gross_weight) as gross_weight
+	, sum(chargable_weight) as chargable_weight
+	, sum(transportation_cost) as transportation_cost
+	, COALESCE(transportation_currency, '-') as transportation_currency
+	, sum(cc_cost) as cc_cost
+	, COALESCE(cc_currency, '-') as cc_currency
+	, sum(other_cost) as other_cost
+	, COALESCE(other_currency, '-') as other_currency
+	, sum(duty_cost) as duty_cost
+	, COALESCE(duty_currency, '-') as duty_currency
+	, sum(special_cost) as special_cost
+	, COALESCE(special_currency, '-') as special_currency
+	, sum(paid_amount) as paid_amount
+	, COALESCE(paid_currency, '-') as paid_currency
+	, sum(document_cost) as document_cost
+	, COALESCE(document_currency, '-') as document_currency
+	--, sum(sls_actual_weight) as sls_actual_weight
+	--, sum(sls_charged_weight) as sls_charged_weight
+	FROM t2
+	group by 1, 2, 3, 4, 5, 12, 14, 16, 18, 20, 22, 24
+	)
+
+SELECT 
+	s.vendor_name
+	, s.cost_type
+	, s.original_country
+	, s.destination_country
+	, s.tp_type
+	, record_number
+	, parcel_qty
+	, carton_qty
+	, gross_weight
+	, chargable_weight
+	, transportation_cost
+	, s.transportation_currency
+	, cc_cost
+	, s.cc_currency
+	, other_cost
+	, s.other_currency
+	, duty_cost
+	, s.duty_currency
+	, document_cost
+	, s.document_currency
+	, special_cost
+	, s.special_currency
+	, paid_amount
+	, s.paid_currency 
+	, sls_actual_weight
+	, sls_charged_weight
+	, sls_qty
 	
-	/* 如果我sum weight 的话， 得出来的结果就很大 39430 kg  */
+FROM s 
+LEFT JOIN w on s.vendor_name = w.vendor_name 
+	and s.cost_type = w.cost_type 
+	and s.original_country = w.original_country 
+	and s.destination_country = w.destination_country
+	and s.tp_type = w.tp_type
+	and s.transportation_currency = w.transportation_currency
+	and s.cc_currency = w.cc_currency
+	and s.other_currency = w.other_currency
+	and s.duty_currency = w.duty_currency
+	and s.special_currency = w.special_currency
+	and s.paid_currency = w.paid_currency
+	and s.document_currency = w.document_currency
 
 
-FROM t2
-LEFT JOIN  b on t2.mawb_no = cast(b.mawb_no as varchar)
-LEFT JOIN SLS_weight on  SLS_weight.consignment_no = b.tracking_no
-WHERE vendor_name = 'Kerry' and destination_country = 'MY' and t2.mawb_no in (
-'112-84861976'
-
-
-)
-group by 1, 2, 3, 4, 5
-order by 1, 2, 3, 4, 5
+order by 1, 2, 3, 4
