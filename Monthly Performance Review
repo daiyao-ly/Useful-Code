@@ -425,3 +425,96 @@ SELECT *
 FROM raw 
 where destination = 'ID'
 ORDER BY 1,2,3,4,5,6,7,8,9,10,11
+
+
+
+
+
+/* pending orders check*/
+WITH edd AS (
+    SELECT order_id, extinfo.expected_receive_time AS edd
+    FROM shopee.shopee_order_logistics_db__order_logistics_tab
+    WHERE DATE(from_unixtime(create_time)) >= date_add('day', -89, current_date)
+  		AND grass_region != ''
+), lm_inbound_sg AS (
+    SELECT 'SG' AS grass_region
+        , log_id
+        , min(IF(regexp_like(message, 'Parcel has arrived at Roadbull sorting centre'), update_time, NULL)) AS rb_inbound_time
+        , min(IF(regexp_like(lower(message), 'shipment in transit with 3rd party'), update_time, NULL)) AS twsip_qt_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility'), update_time, NULL)) AS twsip_njv_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility|order has arrived at sorting hub|arrived at ninja van warehouse|arrived at sorting hub|parcel is being processed at ninja van warehouse|ninja van sorting facility'), update_time, NULL)) AS mysip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse|inbound in transit to sorting center|order received by local sorting centre'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(message, 'SUCCESS'), update_time, NULL)) AS idsip_delivery_time
+    FROM shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1,2
+), lm_inbound_my AS (
+    SELECT 'MY' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'picked up'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1,2
+), lm_inbound_id AS (
+    SELECT 'ID' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'ninja xpress sorting facility'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -100, current_date))
+    GROUP BY 1, 2
+), orders AS (
+	SELECT  l.orderid
+	, l.consignment_no
+	, l.lm_tracking_number
+	, l.channel_id
+        , l.integrated_channel_origin AS origin
+  		, CASE  WHEN l.grass_region = 'SG' AND l.channel_id = 18025 then 'SG Express'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 AND l.service_code in ('SOB', 'SOC') AND shipment_provider = 'Singpost' then 'SG Economy'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 then 'SG Eco to Exp'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18055 then 'SG Seashipping'
+				WHEN l.grass_region = 'MY' AND l.channel_id = 28052 then 'MY Seashipping'
+				ELSE l.grass_region
+		  END AS destination
+     --   , l.payment_method
+        , l.shipping_confirm_time
+        , l.seller_shipout_time
+        , l.wh_inbound_time
+        , l.wh_outbound_time
+        , CASE  WHEN l.channel_id in (18043, 18042) then coalesce(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
+                WHEN l.channel_id in (18044) then sg.idsip_lm_inbound_time
+                WHEN l.channel_id in (18052) then sg.mysip_lm_inbound_time
+                WHEN l.channel_id in (28044) then my.idsip_lm_inbound_time
+                WHEN l.channel_id in (28042, 28043) then my.twsip_lm_inbound_time
+                WHEN l.channel_id in (88042) then id.twsip_lm_inbound_time
+                WHEN l.service_code in ('S03', 'S04', 'S97', 'S98') then coalesce(sg.rb_inbound_time, l.lm_inbound_time)
+                ELSE l.lm_inbound_time
+          END AS lm_inbound_time
+        , coalesce(l.deliver_to_store_time, l.delivery_time) AS delivery_time
+        , l.delivery_failed_time
+        , l.invalid_time
+       , l.cancel_completed_time
+        , l.return_completed_time
+       , COALESCE(l.return_completed_time, l.cancel_completed_time, l.invalid_time) AS cancel_time
+     --   , l.cancel_reason
+     --   , e.edd
+	FROM shopee_reg_cb_anlys.cb_logistics_mart_test l
+	LEFT JOIN edd e ON e.order_id = l.orderid
+    LEFT JOIN shopee.shopee_sls_logistic_sg_db__logistic_request_tab r ON l.ordersn = r.ordersn
+    LEFT JOIN lm_inbound_sg sg ON l.grass_region = sg.grass_region AND l.log_id = sg.log_id
+    LEFT JOIN lm_inbound_my my ON l.grass_region = my.grass_region AND l.log_id = my.log_id
+    LEFT JOIN lm_inbound_id id ON l.grass_region = id.grass_region AND l.log_id = id.log_id
+    --WHERE integrated_channel_origin = 'CN'
+)
+
+
+
+    SELECT  *
+    FROM orders
+    WHERE DATE(from_unixtime(seller_shipout_time)) between DATE('2021-04-01') and DATE('2021-04-30')
+  	AND DATE(from_unixtime(seller_shipout_time)) < current_date
+  	and channel_id in (28042, 28043)
+  	AND delivery_time IS NULL AND cancel_time IS NULL
+    GROUP BY 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17
+
+
