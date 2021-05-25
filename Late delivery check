@@ -79,3 +79,128 @@ on t2.sls_tracking_no = l.consignment_no
 WHERE DATE(from_unixtime(delivery_time)) between date '2021-04-26' and date '2021-05-02'
     AND DATE(from_unixtime(delivery_time)) > DATE(from_unixtime(expected_receive_time))
     AND channel_id in(58010)
+
+
+
+
+
+** contains FL EB mawb and handover time
+with l as (SELECT o.grass_region
+			, o.channel_id
+			, o.service_code
+			, o.integrated_channel_origin
+			, o.consignment_no
+			, o.lm_tracking_number
+			, o.shipping_confirm_time
+			, o.wh_inbound_time
+			, o.wh_outbound_time
+			, o.pickup_done_time
+			, o.expected_receive_time
+			, o.buyer_address_state
+			, o.buyer_address_city
+			, o.delivery_failed_time
+			, CASE WHEN o.channel_id in (18043, 18042) then coalesce(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
+					WHEN o.channel_id in (18044) then sg.idsip_lm_inbound_time
+					WHEN o.channel_id in (18052) then sg.mysip_lm_inbound_time
+					WHEN o.channel_id in (28043, 28042) then my.twsip_lm_inbound_time
+					WHEN o.channel_id in (28044) then my.idsip_lm_inbound_time
+					WHEN o.channel_id in (88042) then id.twsip_lm_inbound_time
+					ELSE coalesce(lm_inbound_time, sg.rb_inbound_time)
+				END AS lm_inbound_time
+			, coalesce(o.deliver_to_store_time, o.delivery_time) AS delivery_time
+		
+		FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
+		LEFT JOIN
+			(SELECT 'SG' AS grass_region
+				, log_id
+				, min(IF(regexp_like(message, 'Parcel has arrived at Roadbull sorting centre'), update_time, NULL)) AS rb_inbound_time
+				, min(IF(regexp_like(lower(message), 'shipment in transit with 3rd party|shipment lodged into transshipment hub local postal agent|shipment received at hub/ branch'), update_time, NULL)) AS twsip_qt_lm_inbound_time
+				, min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility'), update_time, NULL)) AS twsip_njv_lm_inbound_time
+				, min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse|arrived at sorting hub|parcel is being processed at ninja van warehouse|ninja van sorting facility'), update_time, NULL)) AS mysip_lm_inbound_time
+				, min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse|inbound in transit to sorting center|order received by local sorting centre'), update_time, NULL)) AS idsip_lm_inbound_time
+			FROM shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+			WHERE DATE(from_unixtime(update_time)) >= date_add('day', -90, current_date)
+			GROUP BY 1, 2
+			) sg
+		ON o.grass_region = sg.grass_region AND o.log_id = sg.log_id
+		LEFT JOIN
+			(SELECT 'MY' AS grass_region
+				, log_id
+				, min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, NULL)) AS idsip_lm_inbound_time
+				, min(IF(regexp_like(lower(message), 'picked up'), update_time, NULL)) AS twsip_lm_inbound_time
+			FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+			WHERE DATE(from_unixtime(update_time)) >= date_add('day', -90, current_date)
+			GROUP BY 1, 2
+			) my
+		ON o.grass_region = my.grass_region AND o.log_id = my.log_id
+		LEFT JOIN
+			(SELECT 'ID' AS grass_region
+				, log_id
+				, min(IF(regexp_like(lower(message), 'ninja xpress sorting facility'), update_time, NULL)) AS twsip_lm_inbound_time
+			FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+			WHERE DATE(from_unixtime(update_time)) >= date_add('day', -90, current_date)
+			GROUP BY 1, 2
+			) id
+		ON o.grass_region = id.grass_region AND o.log_id = id.log_id
+		WHERE o.integrated_channel_origin is NOT NULL
+
+	), t2 as (
+    		 SELECT  sls_tracking_no, zone
+               FROM (
+                    SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn 
+                            from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+                            )
+                WHERE rn = 1
+), t3 as (
+
+            SELECT mawb_no, tracking_no
+            from shopee.shopee_regional_cb_team__mawb_mapping_tab a
+
+),  fl_db AS (
+    SELECT *
+    FROM (
+        SELECT *, row_number() over (partition by mawb_no order by ingestion_timestamp desc) AS rn
+        FROM shopee_regional_cb_team__sls_fl_db
+        )
+    WHERE rn = 1
+    AND country = 'TW' -- choose the destination
+), FL_DB_delivery_time AS (
+    SELECT mawb_no, mawb_carton_qty,batch1_delivery_time, batch1_qty, batch2_delivery_time,batch2_qty,
+    
+        CASE WHEN CAST(batch1_qty AS DOUBLE) >= 0.8 * CAST(mawb_carton_qty AS DOUBLE) THEN batch1_delivery_time
+             ELSE batch2_delivery_time
+        END AS delivery_time_80th
+    from fl_db
+)
+
+		
+		
+SELECT --l.grass_region
+-- l.channel_id
+ l.service_code
+, l.consignment_no
+, l.lm_tracking_number
+, t3.mawb_no
+, from_unixtime(l.pickup_done_time) AS pickup_done_time
+, from_unixtime(l.wh_inbound_time) AS wh_inbound_time
+, from_unixtime(l.wh_outbound_time) As wh_outbound_time
+, FL_DB_delivery_time.delivery_time_80th
+, from_unixtime(l.lm_inbound_time) As lm_inbound_time
+, from_unixtime(l.delivery_time) AS delivery_time
+, from_unixtime(l.expected_receive_time) AS EDD_time
+--, from_unixtime(l.delivery_failed_time) as delivery_failed_time
+--, t2.zone
+, buyer_address_state
+--, buyer_address_city
+FROM l
+LEFT JOIN t2
+on t2.sls_tracking_no = l.consignment_no
+LEFT JOIN t3
+on l.consignment_no = t3.tracking_no
+LEFT JOIN FL_DB_delivery_time
+on FL_DB_delivery_time.mawb_no = t3.mawb_no
+-- WHERE DATE(from_unixtime(delivery_failed_time)) between date_add('day', -7, current_date) AND date_add('day', -1, current_date)
+WHERE DATE(from_unixtime(delivery_time)) between date '2021-05-13' AND date '2021-05-19'
+    AND DATE(from_unixtime(delivery_time)) > DATE(from_unixtime(expected_receive_time))
+    AND pickup_done_time is not null
+    AND channel_id in(48002)
