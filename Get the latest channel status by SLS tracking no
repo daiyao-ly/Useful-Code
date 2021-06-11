@@ -21,4 +21,13 @@ LEFT JOIN t2 on t2.consignment_no = a.traceno
 --FROM shopee_reg_cb_anlys.cb_logistics_mart_test o
 --LEFT JOIN shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab t ON o.log_id = t.log_id
 --WHERE consignment_no = 'SG211801053624F'
+-
 
+
+--MX LM inbound time and delivery time check
+-- LM inbound starts from  channel status with Msg like "arrive at the port"
+
+with list as (select * from shopee.shopee_regional_cb_team__mx_stuck_lm_check where ingestion_timestamp in (select max(ingestion_timestamp) from shopee.shopee_regional_cb_team__mx_stuck_lm_check))
+
+select b.consignment_no, coalesce(a.lm_inbound_time_actual,a.lm_inbound_time) as mx_lm_inbound_time, a.delivery_time from shopee_reg_cb_anlys.cb_logistics_mart_test a join list b on a.consignment_no = b.consignment_no
+where a.grass_region = 'MX'
