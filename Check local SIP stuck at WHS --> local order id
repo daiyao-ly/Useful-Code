@@ -1,0 +1,14 @@
+SELECT l.orderid, l.ordersn, from_unixtime(wh_inbound_time) as wh_inbound_time , v.local_orderid
+from shopee_reg_cb_anlys.cb_logistics_mart_test l 
+LEFt join shopee.shopee_order_processing_cbcollection_db__order_sync_tab v 
+on v.oversea_orderid = l.orderid
+WHERE date (from_unixtime(shipping_confirm_time)) = date '2021-06-06'
+and wh_outbound_time is null
+and invalid_time is NULL
+and cancel_completed_time is NULL
+and return_completed_time is NULL
+and lost_time is NULL
+and channel_id = 28053
+
+
+我们是 oversea_orderid , 
