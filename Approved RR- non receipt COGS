@@ -1,0 +1,17 @@
+with rr as (
+    SELECT r.orderid
+    , r.reason
+    , r.status
+    , r.ctime
+    from shopee.shopee_return_v2_db__return_v2_tab r 
+    WHERE Date (from_unixtime(r.ctime)) between date '2021-05-01' and date '2021-05-31'
+    and r.status !=3 
+    and r.reason = 1
+    and cb_option = 1
+) 
+
+select  b.grass_region, count(distinct a.orderid) ord_cnt, sum(b.cogs) cogs , sum(b.cogs_usd) cogs_usd from rr a join shopee.order_mart_dwd_order_item_all_event_final_status_df b
+on a.orderid = b.order_id
+group by 1
+
+/* by destination*/
