@@ -1,0 +1,9 @@
+SELECT count (distinct orderid) as created_order
+, channel_id
+, grass_region
+
+FROM shopee_reg_cb_anlys.cb_logistics_mart_test	l
+WHERE date (from_unixtime(create_time)) between date '2021-05-01' and date '2021-05-31'
+and grass_region = 'ID'
+group by 2,3
+Order by count (distinct orderid) DESC
