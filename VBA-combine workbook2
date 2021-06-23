@@ -1,0 +1,62 @@
+Sub CombineWorkbook()
+    Application.DisplayAlerts = False
+    '----------------------------------------------------------
+    Dim CheckSheet As Worksheet
+    For Each CheckSheet In ThisWorkbook.Sheets
+        If Left(CheckSheet.Name, 5) = "Copy_" Then
+            CheckSheet.Delete
+        End If
+    Next
+    '----------------------------------------------------------
+    Dim F As FileDialog
+    Set F = Application.FileDialog(msoFileDialogFilePicker)
+    F.Filters.Clear
+    F.Filters.Add "Select Excel", "*.xls;*.xlsx;*.xlsm"
+    F.Show
+    '----------------------------------------------------------
+    Dim filePath As Variant
+    Dim excel As Workbook
+    Dim sheet As Worksheet
+    Dim AddSheet As Worksheet
+    '----------------------------------------------------------
+    For Each filePath In F.SelectedItems
+        Set excel = Workbooks.Open(filePath)
+        'Dim ExcelName As Variant
+        'ExcelName = Split(excel.Name, ".")
+        'ExcelName = ExcelName(0)
+        '- - - - - - - - - - - - - - - - - - - - - - - - - - -
+        Worksheets("details").Move Before:=Worksheets(1) ' need to ensure that all files contain the right "details" tab
+            
+        excel.Worksheets(1).Cells.Copy
+        Set NewSheet = ThisWorkbook.Sheets.Add
+        NewSheet.Cells.PasteSpecial
+        NewSheet.Name = "Copy_" & excel.Name
+       
+        '- - - - - - - - - - - - - - - - - - - - - - - - - - -
+        excel.Close False
+    Next
+    '----------------------------------------------------------
+    Call CombineWorksheet
+    'Application.DisplayAlerts = True
+    
+End Sub
+
+Sub CombineWorksheet()
+    Dim J As Integer
+    On Error Resume Next
+    Sheets(1).Select
+    Worksheets.Add
+    Sheets(1).Name = "Combined"
+    Sheets(2).Activate
+    Range("A1").EntireRow.Select
+    Selection.Copy Destination:=Sheets(1).Range("A1")
+    For J = 2 To Sheets.Count
+        Sheets(J).Activate
+        c = Sheets(J).Range("IV1").End(xlToLeft).Column
+        r = Sheets(J).Range("A655360").End(xlUp).Row
+        Range("A2").Resize(r - 1, c).Select
+        Selection.Copy Destination:=Sheets(1).Range("A655360").End(xlUp)(2)
+    Next
+    
+End Sub
+
