@@ -15,3 +15,26 @@ on a.orderid = b.order_id
 group by 1
 
 /* by destination*/
+
+
+/* RR qty within a time period*/
+with rr as (
+    SELECT r.orderid
+    , r.reason
+    , r.status
+    , r.ctime
+    from shopee.shopee_return_v2_db__return_v2_tab r 
+    WHERE Date (from_unixtime(r.ctime)) between date '2021-05-01' and date '2021-06-28'
+    and r.status !=3 
+   -- and r.reason = 1
+    and cb_option = 1
+)
+
+SELECT rr.orderid
+, rr.reason
+, l.consignment_no
+, l.channel_id
+from shopee_reg_cb_anlys.cb_logistics_mart_test l
+right JOIN rr on rr.orderid = l.orderid
+where channel_id = 98002
+
