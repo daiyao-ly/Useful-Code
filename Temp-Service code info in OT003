@@ -1,0 +1,9 @@
+SELECT count(distinct consignment_no)
+, sum(charged_weight)/1000
+, 1.00 * avg(lm_inbound_time - wh_outbound_time) / 86400 AS avg_line_haul
+,  1.00 * approx_percentile(lm_inbound_time - wh_outbound_time, 0.80) / 86400 AS total_LH_lead_time_95th
+, service_code
+from cb_logistics_mart_test l 
+WHERE service_code in ('S03','S04')
+and date (from_unixtime(lm_inbound_time)) between date '2021-06-21' and date '2021-06-27' 
+group by 5
