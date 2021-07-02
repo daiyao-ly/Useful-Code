@@ -1,0 +1,35 @@
+with t1 AS (
+SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn
+from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+WHERE channel_id in ('38012','38011','38024','38020')
+AND cast(departed_date as date) >= TIMESTAMP '2021-06-01' 
+AND cast(departed_date as date) <= TIMESTAMP '2021-06-30'
+)
+, t2 AS (
+select * from t1 where rn = 1
+), light as (
+
+
+SELECT ordersn,  cast(r.shopid as INTEGER)
+from  shopee_reg_cb_anlys.cb_logistics_mart_test l 
+right JOIN shopee.shopee_regional_cb_team__cb_tw_light_seller_id_jun r  -- make the shopid ingestion
+on  cast(r.shopid as INTEGER) = l.shopid
+
+)
+
+SELECT
+channel_id,
+ceil(cast(warehouse_weight as double) * 100)*10 as warehouse_weight,
+service,
+count(t2.ordersn) as order_number,
+sum(cast(last_mile_cost as DOUBLE)) as LM_cost,
+sum(cast(warehouse_cost as DOUBLE)) as WH_cost,
+sum(cast(first_leg_cost as DOUBLE)) as FL_cost,
+sum(cast(total_cost as DOUBLE)) as total_cost,
+sum(cast(asf as DOUBLE))as ASF
+FROM t2
+right JOIN light 
+on light.ordersn = t2.ordersn
+
+GROUP by 1,2,3
+Order by channel_id, service, warehouse_weight ASC
