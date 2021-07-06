@@ -16,11 +16,11 @@ WITH edd AS (
         )
     GROUP BY 1, 2
 ), items_raw AS (
-    SELECT orderid, ordersn
-        , sum(amount) AS amount
-    FROM shopee.order_mart__order_item_profile
-    WHERE is_cross_border = 1
-        AND grass_date >= date_add('day', -200, current_date)
+    SELECT order_id orderid, order_sn ordersn
+        , sum(item_amount) AS amount
+    FROM shopee.order_mart_dwd_order_item_all_event_final_status_df
+    WHERE is_cb_shop = 1
+        AND date(from_unixtime(create_timestamp)) >= date_add('day', -200, current_date)
     GROUP BY 1, 2
 ), rr AS (
     SELECT r.orderid
@@ -99,7 +99,7 @@ WITH edd AS (
     LEFT JOIN lm_inbound_sg sg ON l.grass_region = sg.grass_region AND l.log_id = sg.log_id
     LEFT JOIN lm_inbound_my my ON l.grass_region = my.grass_region AND l.log_id = my.log_id
     LEFT JOIN lm_inbound_id id ON l.grass_region = id.grass_region AND l.log_id = id.log_id
-    WHERE channel_id in (48006)
+    WHERE integrated_channel_origin is not NULL
 ), raw AS (
     SELECT  
             origin
