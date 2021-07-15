@@ -86,6 +86,7 @@ WITH edd AS (
           END AS lm_inbound_time
         , coalesce(l.deliver_to_store_time, l.delivery_time) AS delivery_time
         , l.delivery_failed_time
+	, l.first_delivery_attempt_time
         , l.invalid_time
         , l.cancel_completed_time
         , l.return_completed_time
@@ -108,7 +109,7 @@ WITH edd AS (
             , date_trunc('month', from_unixtime(seller_shipout_time)) as month_of_shipout
             , count(distinct orderid) AS seller_shipout_ord
             , count(distinct case when payment_method = 6 then orderid ELSE NULL END) AS seller_shipout_ord_COD
-            , count(distinct CASE WHEN delivery_time IS NOT NULL AND delivery_time > edd then orderid ELSE NULL END) AS delivered_after_edd_ord
+            , count(distinct CASE WHEN first_delivery_attempt_time IS NOT NULL AND first_delivery_attempt_time > edd then orderid ELSE NULL END) AS delivered_after_edd_ord
             , count(distinct CASE WHEN return_completed_time IS NOT NULL then orderid ELSE NULL END) AS rr_ord
             , count(distinct CASE WHEN return_completed_time IS NOT NULL AND rr_reason = 1 then orderid ELSE NULL END) AS rr_non_receipt_order
             , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then orderid ELSE NULL END) AS "C3_nCOD_failed_delivery"
