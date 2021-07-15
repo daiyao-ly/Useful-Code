@@ -56,6 +56,7 @@ WITH edd AS (
           END AS lm_inbound_time
         , coalesce(l.deliver_to_store_time, l.delivery_time) AS delivery_time
         , l.delivery_failed_time
+	, l.first_delivery_attempt_time --new late delivery logic from pickup done to first attempt delivery
         , l.invalid_time
         , l.cancel_completed_time
         , l.return_completed_time
