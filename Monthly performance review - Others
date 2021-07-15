@@ -1,3 +1,153 @@
+--new code on Jul - first attempt delivery time
+WITH edd AS (
+    SELECT order_id, extinfo.expected_receive_time AS edd
+    FROM shopee.shopee_order_logistics_db__order_logistics_tab
+    WHERE DATE(from_unixtime(create_time)) >= date_add('day', -200, current_date)
+  		AND grass_region != ''
+), rr_raw AS (
+    SELECT orderid
+        , reason
+        , sum(amount) AS rr_amount
+    FROM (
+        SELECT r.orderid, r.reason, r.ctime, itemid, modelid, amount
+        FROM shopee.shopee_return_v2_db__return_v2_tab r
+        CROSS JOIN unnest (return_info.item) AS nested_data(userid, orderid, shopid, itemid, modelid, amount, item_price, order_price, currency, status, chatid, snapshoid, offerid, extinfo, groupid)
+        WHERE DATE(from_unixtime(r.ctime)) >= date_add('day', -200, current_date)
+            AND r.status != 3
+        )
+    GROUP BY 1, 2
+), items_raw AS (
+    SELECT order_id orderid, order_sn ordersn
+        , sum(item_amount) AS amount
+    FROM shopee.order_mart_dwd_order_item_all_event_final_status_df
+    WHERE is_cb_shop = 1
+        AND date(from_unixtime(create_timestamp)) >= date_add('day', -200, current_date)
+    GROUP BY 1, 2
+), rr AS (
+    SELECT r.orderid
+        , CASE 
+                WHEN reason = 1 AND r.rr_amount = i.amount then 1
+                WHEN reason = 103 OR (reason = 1 AND r.rr_amount < i.amount) then 103
+                WHEN reason in (3, 106) then 106
+                ELSE reason
+            END AS rr_reason
+    FROM rr_raw r
+    JOIN items_raw i ON r.orderid = i.orderid
+), lm_inbound_sg AS (
+    SELECT 'SG' AS grass_region
+        , log_id
+        , min(IF(regexp_like(message, 'Parcel has arrived at Roadbull sorting centre'), update_time, NULL)) AS rb_inbound_time
+        , min(IF(regexp_like(lower(message), 'shipment in transit with 3rd party'), update_time, NULL)) AS twsip_qt_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility'), update_time, NULL)) AS twsip_njv_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'arrived at ninja van warehouse - singapore|arrived at ninja van warehouse - ninja van sorting facility|order has arrived at sorting hub|arrived at ninja van warehouse|arrived at sorting hub|parcel is being processed at ninja van warehouse|ninja van sorting facility'), update_time, NULL)) AS mysip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse|inbound in transit to sorting center|order received by local sorting centre'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(message, 'SUCCESS'), update_time, NULL)) AS idsip_delivery_time
+    FROM shopee.shopee_sls_logistic_sg_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -200, current_date))
+    GROUP BY 1,2
+), lm_inbound_my AS (
+    SELECT 'MY' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'order_received_at_destination_warehouse'), update_time, NULL)) AS idsip_lm_inbound_time
+        , min(IF(regexp_like(lower(message), 'picked up'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_my_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -200, current_date))
+    GROUP BY 1,2
+), lm_inbound_id AS (
+    SELECT 'ID' AS grass_region
+        , log_id
+        , min(IF(regexp_like(lower(message), 'ninja xpress sorting facility'), update_time, NULL)) AS twsip_lm_inbound_time
+    FROM shopee.shopee_sls_logistic_id_db__logistic_tracking_tab
+    WHERE update_time >= to_unixtime(date_add('day', -200, current_date))
+    GROUP BY 1, 2
+), orders AS (
+	SELECT  l.orderid
+        , l.integrated_channel_origin AS origin
+  		, CASE  WHEN l.grass_region = 'SG' AND l.channel_id = 18025 then 'SG Express'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 AND l.service_code in ('SOB', 'SOC') AND shipment_provider = 'Singpost' then 'SG Economy'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18028 then 'SG Eco to Exp'
+				WHEN l.grass_region = 'SG' AND l.channel_id = 18055 then 'SG Seashipping'
+				WHEN l.grass_region = 'MY' AND l.channel_id = 28052 then 'MY Seashipping'
+				ELSE l.grass_region
+		  END AS destination
+        , l.payment_method
+        , l.shipping_confirm_time
+        , l.seller_shipout_time
+        , l.wh_inbound_time
+        , l.wh_outbound_time
+        , CASE  WHEN l.channel_id in (18043, 18042) then coalesce(sg.twsip_qt_lm_inbound_time, sg.twsip_njv_lm_inbound_time)
+                WHEN l.channel_id in (18044) then sg.idsip_lm_inbound_time
+                WHEN l.channel_id in (18052) then sg.mysip_lm_inbound_time
+                WHEN l.channel_id in (28044) then my.idsip_lm_inbound_time
+                WHEN l.channel_id in (28042, 28043) then my.twsip_lm_inbound_time
+                WHEN l.channel_id in (88042) then id.twsip_lm_inbound_time
+                WHEN l.service_code in ('S03', 'S04', 'S97', 'S98') then coalesce(sg.rb_inbound_time, l.lm_inbound_time)
+                ELSE l.lm_inbound_time
+          END AS lm_inbound_time
+        , coalesce(l.deliver_to_store_time, l.delivery_time) AS delivery_time
+        , l.delivery_failed_time
+        , l.invalid_time
+        , l.cancel_completed_time
+        , l.return_completed_time
+        , l.first_delivery_attempt_time
+        , COALESCE(l.return_completed_time, l.cancel_completed_time, l.invalid_time) AS cancel_time
+        , l.cancel_reason
+        , e.edd
+        , r.rr_reason
+	FROM shopee_reg_cb_anlys.cb_logistics_mart_test l
+	LEFT JOIN edd e ON e.order_id = l.orderid
+	LEFT JOIN rr r ON r.orderid = l.orderid
+    LEFT JOIN shopee.shopee_sls_logistic_sg_db__logistic_request_tab r ON l.ordersn = r.ordersn
+    LEFT JOIN lm_inbound_sg sg ON l.grass_region = sg.grass_region AND l.log_id = sg.log_id
+    LEFT JOIN lm_inbound_my my ON l.grass_region = my.grass_region AND l.log_id = my.log_id
+    LEFT JOIN lm_inbound_id id ON l.grass_region = id.grass_region AND l.log_id = id.log_id
+    WHERE integrated_channel_origin is not NULL
+), raw AS (
+    SELECT  
+            origin
+            ,destination
+            , date_trunc('month', from_unixtime(seller_shipout_time)) as month_of_shipout
+            , count(distinct orderid) AS seller_shipout_ord
+            , count(distinct case when payment_method = 6 then orderid ELSE NULL END) AS seller_shipout_ord_COD
+            , count(distinct CASE WHEN first_delivery_attempt_time IS NOT NULL AND first_delivery_attempt_time > edd then orderid ELSE NULL END) AS delivered_after_edd_ord
+            , count(distinct CASE WHEN return_completed_time IS NOT NULL then orderid ELSE NULL END) AS rr_ord
+            , count(distinct CASE WHEN return_completed_time IS NOT NULL AND rr_reason = 1 then orderid ELSE NULL END) AS rr_non_receipt_order
+            , count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then orderid ELSE NULL END) AS "C3_nCOD_failed_delivery"
+            ,  count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method = 6 then orderid ELSE NULL END) AS "C3_COD_failed_delivery" 
+            , 1.00 * avg(delivery_time - shipping_confirm_time) / 86400 AS total_lead_time
+            , 1.00 * avg(wh_inbound_time - shipping_confirm_time) / 86400 AS avg_paid_whs_in
+            , 1.00 * avg(wh_outbound_time - wh_inbound_time) / 86400 AS avg_whs_ops
+            , 1.00 * avg(lm_inbound_time - wh_outbound_time) / 86400 AS avg_line_haul
+            , 1.00 * avg(delivery_time -lm_inbound_time) / 86400 AS avg_lm_time
+            , 1.00 * approx_percentile(delivery_time - shipping_confirm_time, 0.95) / 86400 AS total_lead_time_95th
+    FROM orders
+    WHERE DATE(from_unixtime(seller_shipout_time)) between DATE('2021-3-1') and DATE('2021-06-30')
+  	AND DATE(from_unixtime(seller_shipout_time)) < current_date
+  --	AND DATE(from_unixtime(wh_outbound_time)) is not NULL
+  --	AND DATE(from_unixtime(lm_inbound_time)) is not NULL
+    GROUP BY 1,2,3
+)
+
+SELECT *
+FROM raw 
+ORDER BY 1,2,3
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 -- new code on June
 WITH edd AS (
     SELECT order_id, extinfo.expected_receive_time AS edd
