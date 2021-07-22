@@ -1,3 +1,104 @@
+-- new version on 2021-07-22
+-- cost/ ASF
+with l as (
+
+SELECT orderid
+, consignment_no
+, integrated_channel_origin
+, grass_region
+, channel_id
+, pickup_done_time
+, pay_time
+, shipping_confirm_time
+, seller_shipout_time
+, wh_inbound_time
+, wh_outbound_time
+, lm_inbound_time
+, delivery_time
+from shopee_reg_cb_anlys.cb_logistics_mart_test
+WHERE integrated_channel_origin is not null -- for all SLS integated channel 
+
+), t1 AS (
+SELECT *, row_number() over (partition by ordersn order by cast(ingestion_timestamp as bigint) DESC) rn
+from shopee.shopee_regional_cb_team__sls_order_estimated_cost_tab
+)
+, t2 AS (
+select * from t1 where rn = 1
+)
+
+
+SELECT integrated_channel_origin
+, grass_region
+, date (from_unixtime(wh_outbound_time))
+, count (distinct l.orderid) as whs_OB_qty
+, sum(cast(t2.asf_usd as DOUBLE)) as total_ASF_usd
+, sum(cast(t2.total_cost_usd as DOUBLE)) as total_cost_usd
+
+from l 
+left join t2
+on t2.sls_tracking_no = l.consignment_no
+WHERE date (from_unixtime(wh_outbound_time)) between date '2021-07-10' and date '2021-07-13'
+group by 1,2, 3
+order by integrated_channel_origin
+
+
+
+
+--- Pickup done% 
+with l as (
+
+SELECT orderid
+, integrated_channel_origin
+, grass_region
+, channel_id
+, pickup_done_time
+, pay_time
+, shipping_confirm_time
+, seller_shipout_time
+, wh_inbound_time
+, wh_outbound_time
+, lm_inbound_time
+, delivery_time
+from shopee_reg_cb_anlys.cb_logistics_mart_test
+WHERE integrated_channel_origin is not null -- for all SLS integated channel 
+
+)
+
+SELECT integrated_channel_origin
+, grass_region
+ ,COUNT(distinct orderid) AS "0_paid_cod_confirmed"
+ ,COUNT(distinct IF(pickup_done_time IS NOT NULL or wh_outbound_time IS NOT NULL or lm_inbound_time IS NOT NULL or delivery_time IS NOT NULL, orderid, null))
+        AS "2_pickup_done"
+from l 
+WHERE date (from_unixtime(shipping_confirm_time)) between date '2021-07-21' and date '2021-07-22'
+group by 1,2
+order by integrated_channel_origin
+
+
+
+
+------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 WITH expected_info AS (
         SELECT
             order_id
