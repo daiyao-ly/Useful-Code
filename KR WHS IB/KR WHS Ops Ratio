@@ -45,6 +45,7 @@ FROM
         UNION ALL
         SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
         FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        UNION ALL
         SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
         FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp        
         
@@ -113,6 +114,7 @@ FROM
         UNION ALL
         SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
         FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        UNION ALL
         SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
         FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp       
         
@@ -180,6 +182,7 @@ FROM
         UNION ALL
         SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
         FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        UNION ALL
         SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
         FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp        
         
@@ -247,6 +250,7 @@ FROM
         UNION ALL
         SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
         FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        UNION ALL
         SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
         FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp
         
