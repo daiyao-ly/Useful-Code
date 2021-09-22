@@ -1,0 +1,270 @@
+---------/* inbound */-----------
+/* contain ID, SG, PH, MY, VN */
+
+SELECT tws.receive_by
+    , o.grass_region
+    , count(distinct o.orderid) AS total_wh_received_order
+    , count(distinct IF(wh_inbound_time = shipping_confirm_date, orderid, NULL)) AS inbound_D0
+    , count(distinct IF(wh_inbound_time = date_add('day', 1, shipping_confirm_date), orderid, NULL)) AS inbound_D1
+    , count(distinct IF(wh_inbound_time = date_add('day', 2, shipping_confirm_date), orderid, NULL)) AS inbound_D2
+    , count(distinct IF(wh_inbound_time = date_add('day', 3, shipping_confirm_date), orderid, NULL)) AS inbound_D3
+    , count(distinct IF(wh_inbound_time = date_add('day', 4, shipping_confirm_date), orderid, NULL)) AS inbound_D4
+    , count(distinct IF(wh_inbound_time = date_add('day', 5, shipping_confirm_date), orderid, NULL)) AS inbound_D5
+    , count(distinct IF(wh_inbound_time = date_add('day', 6, shipping_confirm_date), orderid, NULL)) AS inbound_D6
+    , count(distinct IF(wh_inbound_time = date_add('day', 7, shipping_confirm_date), orderid, NULL)) AS inbound_D7
+    , count(distinct IF(wh_inbound_time = date_add('day', 8, shipping_confirm_date), orderid, NULL)) AS inbound_D8
+    , count(distinct IF(wh_inbound_time = date_add('day', 9, shipping_confirm_date), orderid, NULL)) AS inbound_D9
+    , count(distinct IF(wh_inbound_time = date_add('day', 10, shipping_confirm_date), orderid, NULL)) AS inbound_D10
+FROM
+    (SELECT distinct ord_log.grass_region, ord_log.channel_id, ord_log.orderid, sls.consignment_no
+        , DATE(from_unixtime(sls.wh_inbound_time)) AS wh_inbound_time
+        , DATE(from_unixtime(ord_log.shipping_confirm_time)) AS shipping_confirm_date
+    FROM
+        (SELECT grass_region, order_id AS orderid, shipping_confirm_time, extinfo.channel_id
+        FROM shopee_order_logistics_db__order_logistics_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+            AND extinfo.channel_id in (88021, 18036, 48005, 28050, 58009 )
+            AND DATE(from_unixtime(shipping_confirm_time)) = DATE '2021-09-09'
+        ) ord_log
+    LEFT JOIN
+        (SELECT grass_region, orderid, ordersn
+        FROM shopee_order_v4_db__order_v4_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+        ) ov4
+    ON ord_log.grass_region = ov4.grass_region
+        AND ord_log.orderid = ov4.orderid
+    LEFT JOIN
+        (SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_sg_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_my_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_ssc_slsorder_id_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp        
+        
+        ) sls
+    ON ov4.ordersn = sls.ordersn
+    ) o
+JOIN
+    (SELECT consignment_number, receive_by, relabel_by, pack_by, handover_by, whs_id, actual_weight
+    FROM shopee_tws_db__transit_order_tab
+    WHERE receive_by in ('Dooran Admin', 'YSL')
+    ) tws 
+ON o.consignment_no = tws.consignment_number
+GROUP BY 1, 2
+ORDER BY receive_by,
+    CASE grass_region
+        WHEN 'SG' then 1
+        WHEN 'MY' then 2
+        WHEN 'ID' then 3
+        WHEN 'PH' then 4
+        WHEN 'VN' then 5
+    END
+    
+    
+---------/* outbound */-----------
+
+SELECT tws.receive_by
+    , o.grass_region
+    , count(distinct IF(wh_outbound_time = shipping_confirm_date, orderid, NULL)) AS outbound_D0
+    , count(distinct IF(wh_outbound_time = date_add('day', 1, shipping_confirm_date), orderid, NULL)) AS outbound_D1
+    , count(distinct IF(wh_outbound_time = date_add('day', 2, shipping_confirm_date), orderid, NULL)) AS outbound_D2
+    , count(distinct IF(wh_outbound_time = date_add('day', 3, shipping_confirm_date), orderid, NULL)) AS outbound_D3
+    , count(distinct IF(wh_outbound_time = date_add('day', 4, shipping_confirm_date), orderid, NULL)) AS outbound_D4
+    , count(distinct IF(wh_outbound_time = date_add('day', 5, shipping_confirm_date), orderid, NULL)) AS outbound_D5
+    , count(distinct IF(wh_outbound_time = date_add('day', 6, shipping_confirm_date), orderid, NULL)) AS outbound_D6
+    , count(distinct IF(wh_outbound_time = date_add('day', 7, shipping_confirm_date), orderid, NULL)) AS outbound_D7
+    , count(distinct IF(wh_outbound_time = date_add('day', 8, shipping_confirm_date), orderid, NULL)) AS outbound_D8
+    , count(distinct IF(wh_outbound_time = date_add('day', 9, shipping_confirm_date), orderid, NULL)) AS outbound_D9
+    , count(distinct IF(wh_outbound_time = date_add('day', 10, shipping_confirm_date), orderid, NULL)) AS outbound_D10
+FROM
+    (SELECT distinct ord_log.grass_region, ord_log.channel_id, ord_log.orderid, sls.consignment_no
+        , DATE(from_unixtime(sls.wh_outbound_time)) AS wh_outbound_time
+        , DATE(from_unixtime(ord_log.shipping_confirm_time)) AS shipping_confirm_date
+    FROM
+        (SELECT grass_region, order_id AS orderid, shipping_confirm_time, extinfo.channel_id
+        FROM shopee_order_logistics_db__order_logistics_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+            AND extinfo.channel_id in (88021, 18036, 48005, 28050,58009)
+            AND DATE(from_unixtime(shipping_confirm_time)) = DATE '2021-09-09'
+        ) ord_log
+    LEFT JOIN
+        (SELECT grass_region, orderid, ordersn
+        FROM shopee_order_v4_db__order_v4_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+        ) ov4
+    ON ord_log.grass_region = ov4.grass_region
+        AND ord_log.orderid = ov4.orderid
+    LEFT JOIN
+        (SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_sg_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_my_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_ssc_slsorder_id_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp       
+        
+        ) sls
+    ON ov4.ordersn = sls.ordersn
+    ) o
+JOIN
+    (SELECT consignment_number, receive_by, relabel_by, pack_by, handover_by, whs_id, actual_weight
+    FROM shopee_tws_db__transit_order_tab
+    WHERE receive_by in ('Dooran Admin', 'YSL')
+    ) tws 
+ON o.consignment_no = tws.consignment_number
+GROUP BY 1, 2
+ORDER BY receive_by,
+    CASE grass_region
+        WHEN 'SG' then 1
+        WHEN 'MY' then 2
+        WHEN 'ID' then 3
+        WHEN 'PH' then 4
+        WHEN 'VN' then 5
+    END
+    
+---------/* inbound weight */-----------
+
+SELECT tws.receive_by
+    , o.grass_region
+    , sum(IF(wh_inbound_time = shipping_confirm_date, actual_weight, 0))/1000 AS inbound_weight_D0
+    , sum(distinct IF(wh_inbound_time = date_add('day', 1, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D1
+    , sum(distinct IF(wh_inbound_time = date_add('day', 2, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D2
+    , sum(distinct IF(wh_inbound_time = date_add('day', 3, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D3
+    , sum(distinct IF(wh_inbound_time = date_add('day', 4, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D4
+    , sum(distinct IF(wh_inbound_time = date_add('day', 5, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D5
+    , sum(distinct IF(wh_inbound_time = date_add('day', 6, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D6
+    , sum(distinct IF(wh_inbound_time = date_add('day', 7, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D7
+    , sum(distinct IF(wh_inbound_time = date_add('day', 8, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D8
+    , sum(distinct IF(wh_inbound_time = date_add('day', 9, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D9
+    , sum(distinct IF(wh_inbound_time = date_add('day', 10, shipping_confirm_date), actual_weight, 0))/1000 AS inbound_weight_D10
+FROM
+    (SELECT distinct ord_log.grass_region, ord_log.channel_id, ord_log.orderid, sls.consignment_no
+        , DATE(from_unixtime(sls.wh_inbound_time)) AS wh_inbound_time
+        , DATE(from_unixtime(ord_log.shipping_confirm_time)) AS shipping_confirm_date
+    FROM
+        (SELECT grass_region, order_id AS orderid, shipping_confirm_time, extinfo.channel_id
+        FROM shopee_order_logistics_db__order_logistics_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+            AND extinfo.channel_id in (88021, 18036, 48005, 28050, 58009)
+            AND DATE(from_unixtime(shipping_confirm_time)) = DATE '2021-09-09'
+        ) ord_log
+    LEFT JOIN
+        (SELECT grass_region, orderid, ordersn
+        FROM shopee_order_v4_db__order_v4_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+        ) ov4
+    ON ord_log.grass_region = ov4.grass_region
+        AND ord_log.orderid = ov4.orderid
+    LEFT JOIN
+        (SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_sg_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_my_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_ssc_slsorder_id_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        SELECT ordersn, consignment_no, IF(wh_inbound_date > 0, wh_inbound_date, NULL) AS wh_inbound_time
+        FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp        
+        
+        ) sls
+    ON ov4.ordersn = sls.ordersn
+    ) o
+JOIN
+    (SELECT consignment_number, receive_by, relabel_by, pack_by, handover_by, whs_id, actual_weight
+    FROM shopee_tws_db__transit_order_tab
+    WHERE receive_by in ('Dooran Admin', 'YSL')
+    ) tws 
+ON o.consignment_no = tws.consignment_number
+GROUP BY 1, 2
+ORDER BY receive_by,
+    CASE grass_region
+        WHEN 'SG' then 1
+        WHEN 'MY' then 2
+        WHEN 'ID' then 3
+        WHEN 'PH' then 4
+        WHEN 'VN' then 5
+    END
+    
+---------/* outbound weight */-----------
+
+SELECT tws.receive_by
+    , o.grass_region
+    , sum(IF(wh_outbound_time = shipping_confirm_date, actual_weight, 0))/1000 AS outbound_weight_D0
+    , sum(distinct IF(wh_outbound_time = date_add('day', 1, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D1
+    , sum(distinct IF(wh_outbound_time = date_add('day', 2, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D2
+    , sum(distinct IF(wh_outbound_time = date_add('day', 3, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D3
+    , sum(distinct IF(wh_outbound_time = date_add('day', 4, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D4
+    , sum(distinct IF(wh_outbound_time = date_add('day', 5, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D5
+    , sum(distinct IF(wh_outbound_time = date_add('day', 6, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D6
+    , sum(distinct IF(wh_outbound_time = date_add('day', 7, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D7
+    , sum(distinct IF(wh_outbound_time = date_add('day', 8, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D8
+    , sum(distinct IF(wh_outbound_time = date_add('day', 9, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D9
+    , sum(distinct IF(wh_outbound_time = date_add('day', 10, shipping_confirm_date), actual_weight, 0))/1000 AS outbound_weight_D10
+FROM
+    (SELECT distinct ord_log.grass_region, ord_log.channel_id, ord_log.orderid, sls.consignment_no
+        , DATE(from_unixtime(sls.wh_outbound_time)) AS wh_outbound_time
+        , DATE(from_unixtime(ord_log.shipping_confirm_time)) AS shipping_confirm_date
+    FROM
+        (SELECT grass_region, order_id AS orderid, shipping_confirm_time, extinfo.channel_id
+        FROM shopee_order_logistics_db__order_logistics_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+            AND extinfo.channel_id in (88021, 18036, 48005, 28050, 58009)
+            AND DATE(from_unixtime(shipping_confirm_time)) = DATE '2021-09-09'
+        ) ord_log
+    LEFT JOIN
+        (SELECT grass_region, orderid, ordersn
+        FROM shopee_order_v4_db__order_v4_tab
+        WHERE grass_region in ('ID', 'SG', 'PH', 'MY','VN')
+        ) ov4
+    ON ord_log.grass_region = ov4.grass_region
+        AND ord_log.orderid = ov4.orderid
+    LEFT JOIN
+        (SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_sg_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_my_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_id_db__logistic_request_tab
+        UNION ALL
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_ph_db__logistic_request_tab
+        SELECT ordersn, consignment_no, IF(wh_outbound_date > 0, wh_outbound_date, NULL) AS wh_outbound_time
+        FROM shopee_sls_logistic_vn_db__logistic_request_tab_lfs_union_tmp
+        
+        ) sls
+    ON ov4.ordersn = sls.ordersn
+    ) o
+JOIN
+    (SELECT consignment_number, receive_by, relabel_by, pack_by, handover_by, whs_id, actual_weight
+    FROM shopee_tws_db__transit_order_tab
+    WHERE receive_by in ('Dooran Admin', 'YSL')
+    ) tws 
+ON o.consignment_no = tws.consignment_number
+GROUP BY 1, 2
+ORDER BY receive_by,
+    CASE grass_region
+        WHEN 'SG' then 1
+        WHEN 'MY' then 2
+        WHEN 'ID' then 3
+        WHEN 'PH' then 4
+        When 'VN' then 5
+    END
