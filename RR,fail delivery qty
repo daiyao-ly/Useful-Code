@@ -1,0 +1,44 @@
+ with rr_raw AS (
+    SELECT orderid
+        , reason
+        , sum(amount) AS rr_amount
+    FROM (
+        SELECT r.orderid, r.reason, r.ctime, itemid, modelid, amount
+        FROM shopee.shopee_return_v2_db__return_v2_tab r
+        CROSS JOIN unnest (return_info.item) AS nested_data(userid, orderid, shopid, itemid, modelid, amount, item_price, order_price, currency, status, chatid, snapshoid, offerid, extinfo, groupid)
+        WHERE DATE(from_unixtime(r.ctime)) >= date_add('day', -200, current_date)
+            AND r.status != 3
+        )
+    GROUP BY 1, 2
+),  items_raw AS (
+    SELECT order_id orderid, order_sn ordersn
+        , sum(item_amount) AS amount
+    FROM shopee.order_mart_dwd_order_item_all_event_final_status_df
+    WHERE is_cb_shop = 1
+        AND date(from_unixtime(create_timestamp)) >= date_add('day', -200, current_date)
+    GROUP BY 1, 2
+), rr AS (
+    SELECT r.orderid
+        , CASE 
+                WHEN reason = 1 AND r.rr_amount = i.amount then 1
+                WHEN reason = 103 OR (reason = 1 AND r.rr_amount < i.amount) then 103
+                WHEN reason in (3, 106) then 106
+                ELSE reason
+            END AS rr_reason
+    FROM rr_raw r
+    JOIN items_raw i ON r.orderid = i.orderid
+    )
+
+SELECT 
+ channel_id
+, date_trunc('month', from_unixtime(seller_shipout_time)) as month_of_shipout
+, count (distinct ordersn) as seller_ship_out_qty
+ , count(distinct CASE WHEN return_completed_time IS NOT NULL then ordersn ELSE NULL END) AS rr_ord
+, count(distinct CASE WHEN return_completed_time IS NOT NULL AND rr_reason = 1 then ordersn ELSE NULL END) AS rr_non_receipt_order
+, count(distinct CASE WHEN return_completed_time IS NOT NULL AND rr_reason = 106 then ordersn ELSE NULL END) AS rr_physical_damage_order
+, count(distinct CASE WHEN return_completed_time IS NOT NULL AND rr_reason = 102 then ordersn ELSE NULL END) AS rr_change_mind_order
+, count(distinct CASE WHEN (wh_inbound_time is NOT NULL OR wh_outbound_time is NOT NULL OR lm_inbound_time is NOT NULL OR delivery_time IS NOT NULL) AND delivery_failed_time IS NOT NULL AND payment_method != 6 then ordersn ELSE NULL END) AS "C3_nCOD_failed_delivery"
+from shopee_reg_cb_anlys.cb_logistics_mart_test l 
+LEFT join rr on rr.orderid = l.orderid
+WHERE channel_id in (148001, 148002) and date (from_unixtime(seller_shipout_time)) between date '2021-11-01' and date '2022-01-31'
+group by 1,2
