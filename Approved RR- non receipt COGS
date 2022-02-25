@@ -38,3 +38,5 @@ from shopee_reg_cb_anlys.cb_logistics_mart_test l
 right JOIN rr on rr.orderid = l.orderid
 where channel_id = 98002
 
+RR reason
+0: none, 1: nonreceipt, 2: wrong item, 3: item damaged, 4: different from description, 5: mutual agreement, 6: other, 101: item wrong/damaged, 102: change of mind, 103: item missing, 104: expectation failed, 105: item is fake, 106: physical damage, 107: functional damage
