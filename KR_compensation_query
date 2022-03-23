@@ -1,0 +1,44 @@
+with rr as (
+select r.orderid
+    , r.reason
+    , r.status
+    , r.ctime 
+    from marketplace.shopee_return_v2_db__return_v2_tab__reg_daily_s0_live r
+    where  r.cb_option = 1 and r.status != 3 -- return_request not cancelled
+
+)
+--status:
+
+--0: deleted, 1: requested, 2: accepted, 3: cancelled, 4: judging, 
+--5: refund_paid, 6: closed, 7: return_processing (start reverse logistics), 
+--8: return_seller_dispute (seller dispute after item is returned)
+
+-- reason:
+--0: none, 1: nonreceipt, 2: wrong item, 3: item damaged, 4: different from description, 
+--5: mutual agreement, 6: other, 101: item wrong/damaged, 102: change of mind, 103: item missing, 104: expectation failed, 
+--105: item is fake, 106: physical damage, 107: functional damage
+
+--
+
+
+select 
+l.consignment_no
+, l.lm_tracking_number
+, l.ordersn
+, rr.status
+, rr.reason
+, from_unixtime (l.shipping_confirm_time) as shipping_confirm_time
+, from_unixtime( l.return_completed_time) as return_completed_time
+, from_unixtime(l.delivery_failed_time) as delivery_failed_time
+, from_unixtime(l.pickup_failed_time) as pickup_failed_time
+, from_unixtime(l.lost_time) as lost_time
+
+from regcbbi_others.cb_logistics_mart_test l 
+left join rr on  l.orderid = rr.orderid 
+where l.channel_id = 98002
+and l.ordersn in (
+
+'2112010TBY7RXR',
+'2112049BVWQ70Q'
+
+)
