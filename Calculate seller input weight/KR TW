@@ -1,0 +1,44 @@
+with bb as (
+    select  b.item_id
+    , b.order_sn
+    from mp_order.dwd_order_item_all_ent_df__reg_s0_live b 
+    where  grass_region = 'TW' and tz_type = 'local' and is_cb_shop = 1
+    and grass_date >= date_add ('day', -1, current_date )
+     and shipping_channel_id = 38015
+
+), aa as (
+   select 
+    a.item_id
+    ,a.dim_height
+    , a.dim_length
+    , a.dim_width
+    , a.weight
+from mp_item.dim_item__reg_s0_live a
+where grass_region = 'TW' and tz_type = 'local' and is_cb_shop = 1
+and grass_date >= date_add ('day', -1, current_date )
+), ll as (
+    select l.ordersn
+    , l.channel_id
+    , from_unixtime (l.shipping_confirm_time) as shipping_confirm_time
+    , from_unixtime(l.seller_shipout_time) as seller_shipout_time
+     from regcbbi_others.cb_logistics_mart_test l
+     where  channel_id = 38015 and seller_shipout_time is not null and wh_inbound_time is null and invalid_time is null
+     and cancel_completed_time is null and return_completed_time is null
+
+)
+
+SELECT  
+ll.channel_id
+, bb.order_sn
+, ll. shipping_confirm_time
+, ll.seller_shipout_time
+, sum (aa.weight) as seller_weight
+, sum (aa.dim_length) as seller_length
+, sum (aa.dim_width) as seller_width
+, sum(aa.dim_height) as seller_height
+from ll
+LEFT join bb
+on bb.order_sn = ll.ordersn
+left join  aa
+on bb.item_id = aa.item_id
+group by 1,2,3,4
