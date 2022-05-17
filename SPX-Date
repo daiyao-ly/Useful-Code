@@ -1,0 +1,10 @@
+-- how to get the date difference:
+grass_date >= current_date - interval '60' day
+
+order_placed_local_date >= date_add('day', -30, current_date)
+
+
+Date format --weekly number of a year
+date_format(from_unixtime(sls.wh_outbound_date), '%Y-%m') AS wh_shipout_month
+
+https://www.w3schools.com/sql/func_mysql_date_format.asp
