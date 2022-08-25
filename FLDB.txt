@@ -1,0 +1,239 @@
+WITH 
+    conso AS (
+        SELECT
+          c.sls_tracking_number as consignment_no
+     	, m.group_id AS conso_group_sls_tn
+        FROM 
+            (
+                SELECT service_code, group_id, handovered_time
+                FROM tws_mart.shopee_tws_sz_db__transit_conso_group_tab__reg_daily_s0_live
+                WHERE handovered_time >= to_unixtime(DATE'2022-01-01')
+                    AND order_quantity >= 2
+                    AND group_id is NOT NULL
+                    AND group_id != ''
+                    AND grass_region != ''
+            ) m 
+        JOIN 
+            (
+                SELECT sls_tracking_number, group_id
+                FROM tws_mart.shopee_tws_sz_db__transit_conso_order_tab__reg_daily_s0_live
+                WHERE ctime >= to_unixtime(DATE'2022-01-01')
+                    AND sls_tracking_number is not NULL
+                    AND group_id is NOT NULL
+                    AND group_id != ''
+                    AND whs_id != 'TWQZ'
+            
+            ) c
+    ON m.group_id = c.group_id
+    ),
+    
+    sls AS (
+        SELECT DISTINCT
+                integrated_channel_origin,
+                grass_region,
+                case when conso.conso_group_sls_tn is not null then conso.conso_group_sls_tn 
+                     else t3.consignment_no end as consignment_no,
+                lm_inbound_time,
+                wh_outbound_time,
+                package_reference_id
+        FROM regcbbi_others.cb_logistics_mart_test t3
+        LEFT JOIN sls_mart.shopee_ssc_lfs_cross_db__manifest_bind_tab__reg_daily_s0_live t2 on t2.inner_package_reference_id = t3.consignment_no
+        LEFT JOIN conso on t3.consignment_no = conso.consignment_no
+        WHERE from_unixtime(lm_inbound_time) BETWEEN date_add('week', -1, date_trunc('week', current_date)) AND date_add('day',-1, date_trunc('week', current_date))
+    ),
+
+    fldb_mawb AS (
+        SELECT * FROM (
+            SELECT distinct
+                inner_package_reference_id as carton_ref_no,
+                package_no as mawb_no,
+                packer_id as mawb_packer_id,
+                row_number() over (partition BY inner_package_reference_id ORDER BY t2.ctime DESC) AS rn
+            FROM sls_mart.shopee_ssc_lfs_cross_db__manifest_bind_tab__reg_daily_s0_live t2
+            left join sls_mart.shopee_ssc_lfs_cross_db__manifest_package_tab__reg_daily_s0_live t4 on t2.package_reference_id = t4.package_reference_id
+            where t2.package_reference_id like '%MAWB%' and t4.package_type='MAWB'
+        )
+        WHERE rn = 1 
+    ),
+
+    vendor_latest AS (
+        SELECT * FROM 
+        (
+            SELECT distinct 
+                    package_reference_id, 
+                    tracking_code as t_code,
+                    tracking_source as latest_source,
+                    row_number() over (partition BY package_reference_id, tracking_code ORDER BY ctime DESC) AS rn
+            FROM sls_mart.shopee_ssc_lfs_cross_db__manifest_package_tracking_tab__reg_daily_s0_live
+        )
+        WHERE rn=1     
+    ),
+
+    mawb_raw AS (
+        SELECT 
+            a.*, 
+            CASE WHEN progress = 'DONE' THEN 'API'
+                 ELSE 'Manual' END AS sync_type,
+            CASE WHEN vendor_type like '%CC%' THEN 'CC' 
+                 WHEN vendor_type like '%LH%' and grass_region in ('ID','PH') and substr(vendor,4) != 'SKYWIN' THEN 'LH' 
+                 WHEN vendor_type like '%LH%' and grass_region in ('BR','MX','CO','CL') and substr(vendor,4) != 'Parasex' THEN 'LH'
+                 WHEN vendor_type like '%LH%' and grass_region in ('PL') and substr(vendor,4) = 'SKYOCEAN' THEN 'LH'
+                 ELSE 'LH+CC' END as vendor_type,
+            substr(vendor,4) as vendor
+        FROM (
+            SELECT DISTINCT
+                t1.package_reference_id,
+                t3.grass_region,
+                case when tracking_source != 'FL_MAWB' then latest_source
+                     when tracking_source = 'FL_MAWB' and t1.package_type = 'Carton' then mawb_packer_id 
+                     else packer_id end as tracking_source,
+                min(IF(tracking_code = 'F339', tracking_time, null)) as export_cc_time,
+                min(IF(tracking_code = 'F360', tracking_time, null)) AS dest_country_arrival_time,
+                -- import cc F code from F370 to F399 starting from Aug 15
+                min(coalesce(IF(tracking_code = 'F399', tracking_time, null),IF(tracking_code = 'F370', tracking_time, null))) as import_cc_time,
+                min(IF(tracking_code = 'F419', tracking_time, null)) as lm_handover_time,
+                min(IF(tracking_code = 'F339', t1.ctime, null)) as sync_export_cc_time,
+                min(IF(tracking_code = 'F360', t1.ctime, null)) AS sync_dest_country_arrival_time,
+                -- import cc F code from F370 to F399 starting from Aug 15
+                min(coalesce(IF(tracking_code = 'F399', t1.ctime, null),IF(tracking_code = 'F370', t1.ctime, null))) as sync_import_cc_time,
+                min(IF(tracking_code = 'F419', t1.ctime, null)) as sync_lm_handover_time
+            FROM sls_mart.shopee_ssc_lfs_cross_db__manifest_package_tracking_tab__reg_daily_s0_live t1
+            LEFT JOIN vendor_latest on (t1.package_reference_id = vendor_latest.package_reference_id and t1.tracking_code = vendor_latest.t_code)
+            LEFT JOIN sls_mart.shopee_ssc_lfs_cross_db__manifest_bind_tab__reg_daily_s0_live t2 on t1.package_reference_id = t2.package_reference_id
+            LEFT JOIN sls_mart.shopee_ssc_lfs_cross_db__manifest_package_tab__reg_daily_s0_live t4 on t1.package_reference_id = t4.package_reference_id
+            LEFT JOIN fldb_mawb t5 on t1.package_reference_id = t5.carton_ref_no
+            JOIN sls t3 on t2.inner_package_reference_id = t3.consignment_no
+            -- dev_regcb_bi.lhdb_carrier_code_mapping ingested from LH tracking summary tracker 'sheet1' tab
+            group by 1,2,3
+        ) a JOIN  dev_regcb_bi.lhdb_carrier_code_mapping t5 on trim(a.tracking_source) = trim(t5.carrier_code)
+    ),
+
+    mawb_pc as
+    (
+        SELECT DISTINCT
+            integrated_channel_origin,
+            mawb_raw.grass_region,
+            consignment_no,
+            sls.package_reference_id,
+            sync_type,
+            vendor_type,
+            vendor,
+            wh_outbound_time,
+            export_cc_time,
+            dest_country_arrival_time,
+            import_cc_time,
+            lm_handover_time,
+            lm_inbound_time,
+            sync_export_cc_time,
+            sync_dest_country_arrival_time,
+            sync_import_cc_time,
+            sync_lm_handover_time,
+            -- if 3pl upload all statuses
+            CASE WHEN vendor_type = 'CC' THEN (
+                    CASE WHEN import_cc_time is null or lm_handover_time is null THEN null ELSE consignment_no END
+                    )
+                    WHEN vendor_type = 'LH' THEN (
+                    CASE WHEN export_cc_time is null or dest_country_arrival_time is null THEN null ELSE consignment_no END
+                    )
+                    ELSE (
+                        CASE WHEN export_cc_time is null or dest_country_arrival_time is null or import_cc_time is null or lm_handover_time is null 
+                        THEN null ELSE consignment_no END
+                    ) END AS if_uploaded,
+            -- if uploaded statuses in order
+            CASE WHEN vendor_type = 'CC' THEN (
+                    CASE WHEN coalesce(import_cc_time,lm_handover_time) <= coalesce(lm_handover_time,import_cc_time)
+                          AND coalesce(import_cc_time,lm_handover_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                          AND coalesce(lm_handover_time,import_cc_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                    THEN consignment_no ELSE null END
+                    )
+                    WHEN vendor_type = 'LH' THEN (
+                    CASE WHEN coalesce(export_cc_time,dest_country_arrival_time) <= coalesce(dest_country_arrival_time,export_cc_time) 
+                          AND coalesce(export_cc_time,dest_country_arrival_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                          AND coalesce(dest_country_arrival_time,export_cc_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                    THEN consignment_no ELSE null END
+                    )
+                    ELSE (
+                    CASE WHEN coalesce(export_cc_time, dest_country_arrival_time, import_cc_time, lm_handover_time) <= coalesce(dest_country_arrival_time, import_cc_time, lm_handover_time, export_cc_time)
+                         AND coalesce(dest_country_arrival_time, import_cc_time, lm_handover_time, export_cc_time) <= coalesce(import_cc_time, lm_handover_time,dest_country_arrival_time, export_cc_time)
+                         AND coalesce(import_cc_time, lm_handover_time, export_cc_time, dest_country_arrival_time) <= coalesce(lm_handover_time,import_cc_time,dest_country_arrival_time, export_cc_time)
+                         AND coalesce(lm_handover_time, export_cc_time, dest_country_arrival_time, import_cc_time) <= coalesce(lm_handover_time,import_cc_time, dest_country_arrival_time, export_cc_time) 
+                         AND coalesce(export_cc_time, dest_country_arrival_time, import_cc_time, lm_handover_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                         AND coalesce(dest_country_arrival_time, import_cc_time, lm_handover_time, export_cc_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                         AND coalesce(import_cc_time, lm_handover_time, export_cc_time, dest_country_arrival_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                         AND coalesce(lm_handover_time, export_cc_time, dest_country_arrival_time, import_cc_time) BETWEEN wh_outbound_time AND lm_inbound_time
+                         THEN consignment_no ELSE null END
+                    ) END AS if_sequence_correct,
+             -- if upload all statuses and all statuses in order
+            CASE WHEN vendor_type = 'CC' THEN (
+                    CASE WHEN import_cc_time is null or lm_handover_time is null 
+                              or wh_outbound_time > import_cc_time or import_cc_time > lm_handover_time or lm_handover_time > lm_inbound_time THEN null ELSE consignment_no END 
+                    )
+                    WHEN vendor_type = 'LH' THEN (
+                    CASE WHEN export_cc_time is null or dest_country_arrival_time is null 
+                              or wh_outbound_time > export_cc_time or export_cc_time > dest_country_arrival_time or dest_country_arrival_time > lm_inbound_time THEN null ELSE consignment_no END
+                    )
+                    ELSE (
+                    CASE WHEN export_cc_time is null or dest_country_arrival_time is null or import_cc_time is null or lm_handover_time is null or 
+                              wh_outbound_time > export_cc_time or export_cc_time > dest_country_arrival_time or dest_country_arrival_time > import_cc_time or import_cc_time > lm_handover_time or lm_handover_time > lm_inbound_time
+                         THEN null ELSE consignment_no END
+                    ) END AS if_all_correct
+        FROM mawb_raw 
+        LEFT JOIN sls on sls.package_reference_id = mawb_raw.package_reference_id
+        where integrated_channel_origin is not null
+    ) 
+
+SELECT distinct integrated_channel_origin,
+                grass_region,
+                sync_type,
+                vendor_type,
+                vendor, 
+                count(distinct consignment_no) as fldb_qty,
+                count(distinct if_uploaded) as uploaded_qty,
+                count(distinct if_sequence_correct) as correct_sequence_qty,
+                count(distinct if_all_correct) as all_correct_qty,
+                -- sync delay include outlier
+                round(avg(export_cc_sync_lag),2) as export_cc_sync_lag,
+                round(avg(dest_country_arrival_sync_lag), 2) as dest_country_arrival_sync_lag,
+                round(avg(lm_cc_done_sync_lag),2) as lm_cc_done_sync_lag,
+                round(avg(lm_handover_sync_lag), 2) as lm_handover_sync_lag,
+                -- sync delay excude outlier
+                round(avg(accurate_export_cc_sync_lag),2) as accurate_export_cc_sync_lag,
+                round(avg(accurate_dest_country_arrival_sync_lag),2) as accurate_dest_country_arrival_sync_lag,
+                round(avg(accurate_import_cc_sync_lag),2) as accurate_import_cc_sync_lag,
+                round(avg(accurate_lm_handover_sync_lag),2) as accurate_lm_handover_sync_lag,
+                -- lead time by stages exclude outlier
+                round(avg(wh_to_export_cc),2) as wh_to_export_cc,
+                round(avg(export_cc_to_dest),2) as export_cc_to_dest,
+                round(avg(dest_to_import_cc),2) as dest_to_import_cc,
+                round(avg(import_cc_to_lm_handover),2) as import_cc_to_lm_handover,
+                round(avg(lm_handover_to_inbound),2) as lm_handover_to_inbound,
+                -- sync lag longer than lead time
+                count(distinct if(export_cc_to_dest < accurate_export_cc_sync_lag, consignment_no, null)) as export_cc_long_delay_qty,
+                count(distinct if(dest_to_import_cc < accurate_dest_country_arrival_sync_lag, consignment_no, null)) as dest_country_arrival_long_delay_qty,
+                count(distinct if(import_cc_to_lm_handover < accurate_import_cc_sync_lag, consignment_no, null)) as import_cc_long_delay_qty,
+                count(distinct if(lm_handover_to_inbound < accurate_lm_handover_sync_lag, consignment_no, null)) as lh_lm_handover_long_delay_qty
+                
+FROM
+( 
+    SELECT DISTINCT *, 
+        -- sync delay
+         cast(sync_export_cc_time - export_cc_time as double)/86400 as export_cc_sync_lag,
+         cast(sync_dest_country_arrival_time - dest_country_arrival_time as double)/86400 as dest_country_arrival_sync_lag,
+         cast(sync_import_cc_time - import_cc_time as double)/86400 as lm_cc_done_sync_lag,
+         cast(sync_lm_handover_time - lm_handover_time as double)/86400 as lm_handover_sync_lag,
+         -- sync delay excude outlier
+         if(export_cc_time > wh_outbound_time, cast(sync_export_cc_time - export_cc_time as double)/86400, null) as accurate_export_cc_sync_lag,
+         if(dest_country_arrival_time > export_cc_time, cast(sync_dest_country_arrival_time - dest_country_arrival_time as double)/86400, null) as accurate_dest_country_arrival_sync_lag,
+         if(import_cc_time > dest_country_arrival_time, cast(sync_import_cc_time - import_cc_time as double)/86400, null) as accurate_import_cc_sync_lag,
+         if(lm_handover_time >import_cc_time, cast(sync_lm_handover_time - lm_handover_time as double)/86400, null) as accurate_lm_handover_sync_lag,
+         -- lead time by stages exclude outlier
+         if(export_cc_time > wh_outbound_time, cast(export_cc_time-wh_outbound_time as double)/86400, null) as wh_to_export_cc,
+         if(dest_country_arrival_time > export_cc_time, cast(dest_country_arrival_time - export_cc_time as double)/86400, null) as export_cc_to_dest,
+         if(import_cc_time > dest_country_arrival_time, cast(import_cc_time - dest_country_arrival_time as double)/86400, null) as dest_to_import_cc,
+         if(lm_handover_time > import_cc_time, cast(lm_handover_time - import_cc_time as double)/86400, null) as import_cc_to_lm_handover,
+         if(lm_inbound_time > lm_handover_time, cast(lm_inbound_time - lm_handover_time as double)/86400, null) as lm_handover_to_inbound
+    FROM mawb_pc
+)
+
+GROUP BY 1,2,3,4,5
+ORDER BY 1,2,3,4,5
