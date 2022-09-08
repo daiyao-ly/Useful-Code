@@ -1,0 +1,41 @@
+WITH conso as
+    (
+        select distinct handovered_time, lm_tracking_number, group_id, order_quantity
+        from tws_mart.shopee_tws_sz_db__transit_conso_group_tab__reg_continuous_s0_live
+        where country = 'SG'
+            and order_quantity >= 2
+            and group_id != ''
+            and handovered_time > 0 --new
+    )
+
+select DATE(from_unixtime(sls.cb_tws_outbound_timestamp)) as wh_outbound_date
+    , substr(spx.buyer_zipcode, 1, 2) as town
+    , spx.collection_point_id
+    , (count(distinct sls.lm_tracking_no) - count(distinct conso.lm_tracking_number) + sum(coalesce(conso.order_quantity, 0))) AS before_conso_parcel_count
+    , count(distinct sls.lm_tracking_no) AS final_parcel_count 
+    , count(distinct conso.lm_tracking_number) as conso_group_count
+    , sum(coalesce(conso.order_quantity, 0)) as conso_child_parcel_count
+from
+    (
+        select distinct lm_tracking_no, cb_tws_outbound_timestamp, consolidated_type
+        from sls_mart.dwd_parcel_detail_union_df_sg
+        WHERE grass_date = current_date - interval '1' day
+            AND tz_type = 'local'
+            AND cb_flag = 1
+            AND consolidated_type != 2  --1 parent parcel, 2 child parcel, 3 non-consolidated parcel                                                                               
+            AND is_reverse = 0
+            AND fulfillment_channel_id = 18099
+    ) sls
+join
+    (
+        select distinct collection_point_id, shipment_id, buyer_zipcode, buyer_address
+        from spx_mart.shopee_fms_sg_db__buyer_extension_info_tab__reg_continuous_s0_live
+    ) spx 
+on sls.lm_tracking_no = spx.shipment_id
+left join conso
+on sls.lm_tracking_no = conso.lm_tracking_number
+WHERE DATE(from_unixtime(sls.cb_tws_outbound_timestamp)) between date_add('month',-2,date_trunc('month',date_add('day',-1,current_date))) AND date_add('day',-1,current_date) -- W-1, Mon start of week
+
+group by 1, 2, 3
+order by 1, 2, 3
+
